@@ -12,6 +12,7 @@
 #   update <id> [--body-file <path>] [--pr <url>] [--report <path>] [--archive-body]
 #   hold <id> [--reason <text>] [--kind <kind>] [--until <date>]
 #   unhold <id>
+#   where <id>        print the tracker path <id> resolves to (read-only)
 #
 # Selected by `config/backlog-backend` containing `br`: the backlog runners in
 # bin/fm-backlog-transition-lib.sh, bin/fm-captain-hold.sh and
@@ -399,6 +400,13 @@ verb_unhold() {  # <id>
   mutate "$id" unhold undefer "$id"
 }
 
+verb_where() {  # <id>
+  local id=${1:-}
+  [ -n "$id" ] || fail "usage: where <id>"
+  resolve_project "$id"
+  printf '%s\n' "$PROJECT_PATH"
+}
+
 command -v jq >/dev/null 2>&1 || fail "jq is required"
 command -v br >/dev/null 2>&1 || fail "br is not on PATH"
 
@@ -414,6 +422,7 @@ case "$verb" in
   update) verb_update "$@" ;;
   hold) verb_hold "$@" ;;
   unhold) verb_unhold "$@" ;;
+  where) verb_where "$@" ;;
   -h|--help|'') awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0" ;;
   *) fail "$verb is not a backlog verb on the br backend; create and edit beads with br in the project's checkout" ;;
 esac

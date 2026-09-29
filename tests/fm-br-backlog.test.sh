@@ -345,12 +345,9 @@ done
 
 # --- teardown close ------------------------------------------------------------
 
-T=$(bead "Landed work")
-"$ADAPTER" start "$T" >/dev/null || fail "start $T failed"
-TD="$TMP_ROOT/teardown"
-TD_BIN=$(fm_fakebin "$TD")
-mkdir -p "$TD/state"
-touch "$TD/state/.last-watcher-beat"
+TD_ROOT="$TMP_ROOT/teardown"
+mkdir -p "$TD_ROOT"
+TD_BIN=$(fm_fakebin "$TD_ROOT")
 fm_fake_exit0 "$TD_BIN" treehouse tmux gh no-mistakes
 cat > "$TD_BIN/gh-axi" <<'SH'
 #!/usr/bin/env bash
@@ -361,31 +358,61 @@ esac
 exit 0
 SH
 chmod +x "$TD_BIN/gh-axi"
-git init -q --bare "$TD/origin.git"
-git -C "$TD/origin.git" symbolic-ref HEAD refs/heads/main
-git clone -q "$TD/origin.git" "$TD/seed" 2>/dev/null
-git -C "$TD/seed" -c user.email=t@t -c user.name=t commit -q --allow-empty -m baseline
-git -C "$TD/seed" push -q origin main
-git clone -q "$TD/origin.git" "$TD/project"
-git -C "$TD/project" remote set-head origin main 2>/dev/null || true
-git -C "$TD/project" worktree add -q -b "fm/$T" "$TD/wt" main
-fm_write_meta "$TD/state/$T.meta" \
-  "window=firstmate:fm-$T" \
-  "endpoint_task_id=$T" \
-  "worktree=$TD/wt" \
-  "project=$TD/project" \
-  "kind=ship" \
-  "mode=no-mistakes" \
-  "spawn_gen=br-backlog-test-$T" \
-  "pr=https://github.com/example/repo/pull/7"
-out=$(FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$TD/state" FM_DATA_OVERRIDE="$DATA" \
-  FM_CONFIG_OVERRIDE="$CONFIG" PATH="$TD_BIN:$FAKEBIN:$AMBIENT_PATH" \
-  "$ROOT/bin/fm-teardown.sh" "$T" 2>&1) || fail "teardown of a landed task failed: $out"
+
+# Tears down a landed ship for <id> in its own scratch project and prints the
+# teardown's output.
+run_teardown() {  # <id>
+  local id=$1 td="$TD_ROOT/$1"
+  mkdir -p "$td/state"
+  touch "$td/state/.last-watcher-beat"
+  git init -q --bare "$td/origin.git"
+  git -C "$td/origin.git" symbolic-ref HEAD refs/heads/main
+  git clone -q "$td/origin.git" "$td/seed" 2>/dev/null
+  git -C "$td/seed" -c user.email=t@t -c user.name=t commit -q --allow-empty -m baseline
+  git -C "$td/seed" push -q origin main
+  git clone -q "$td/origin.git" "$td/project"
+  git -C "$td/project" remote set-head origin main 2>/dev/null || true
+  git -C "$td/project" worktree add -q -b "fm/$id" "$td/wt" main
+  fm_write_meta "$td/state/$id.meta" \
+    "window=firstmate:fm-$id" \
+    "endpoint_task_id=$id" \
+    "worktree=$td/wt" \
+    "project=$td/project" \
+    "kind=ship" \
+    "mode=no-mistakes" \
+    "spawn_gen=br-backlog-test-$id" \
+    "pr=https://github.com/example/repo/pull/7"
+  FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$td/state" FM_DATA_OVERRIDE="$DATA" \
+    FM_CONFIG_OVERRIDE="$CONFIG" PATH="$TD_BIN:$FAKEBIN:$AMBIENT_PATH" \
+    "$ROOT/bin/fm-teardown.sh" "$id" 2>&1
+}
+
+T=$(bead "Landed work")
+"$ADAPTER" start "$T" >/dev/null || fail "start $T failed"
+out=$(run_teardown "$T") || fail "teardown of a landed task failed: $out"
 assert_equals closed "$(br_field "$T" .status)" "teardown closes the bead"
 assert_contains "$(br_field "$T" .close_reason)" "https://github.com/example/repo/pull/7" \
   "the close reason names the landed PR"
-assert_absent "$TD/state/$T.backlog-close" "teardown retires its pending-close record"
+assert_absent "$TD_ROOT/$T/state/$T.backlog-close" "teardown retires its pending-close record"
 pass "teardown of a landed task closes the bead with the PR in its close reason"
+
+assert_contains "$out" "Backlog: $T is closed in the br tracker at $TRACKER. Run bin/fm-tasks-axi.sh ready" \
+  "the closed line names the tracker the bead lives in"
+assert_not_contains "$out" "tasks-axi backend" "the closed line does not claim a tasks-axi backend"
+pass "teardown reports the close in the bead's br tracker"
+
+R=$(bead "Retained work")
+"$ADAPTER" start "$R" >/dev/null || fail "start $R failed"
+"$ADAPTER" hold "$R" --reason "captain call" --kind captain >/dev/null || fail "hold $R failed"
+out=$(run_teardown "$R") || fail "teardown of a held task failed: $out"
+assert_contains "$out" "Backlog: $R stays open in the br tracker at $TRACKER, still held for the captain" \
+  "the retained line names the tracker the bead lives in"
+pass "teardown reports a retained captain call in the bead's br tracker"
+
+assert_equals "$TRACKER" "$("$ADAPTER" where "$Q")" "where prints the tracker a listed id resolves to"
+out=$("$ADAPTER" where "zz-unlisted" 2>/dev/null) && fail "where resolved an unlisted prefix: $out"
+assert_contains "$out" "code: NOT_FOUND" "where reports an unlisted prefix as NOT_FOUND"
+pass "where resolves an id to its tracker and refuses an unlisted prefix"
 
 # --- session-start digest --------------------------------------------------------
 

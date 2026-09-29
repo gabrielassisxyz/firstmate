@@ -21,6 +21,7 @@ The rest of `AGENTS.md` is upstream's contract and stays as upstream wrote it. T
 | `bin/fm-backlog-transition-lib.sh` | `fm_tasks_axi` and the bounded `show` read run the selected runner instead of a literal `tasks-axi` | so every lifecycle read and mutation reaches the `br` adapter unchanged |
 | `bin/fm-captain-hold.sh` | its `tasks_axi` wrapper runs the selected runner, and the `--kind captain` help probe is skipped under `br` | captain holds become `br defer` / `br undefer` |
 | `bin/fm-tasks-axi.sh` | hands its arguments to the `br` adapter under `backlog-backend=br` | the routine backlog command must not write a tasks-axi row on a `br` home |
+| `bin/fm-teardown.sh` | under `backlog-backend=br` the closing backlog line names the bead's tracker, resolved by the new read-only `bin/fm-br-backlog.sh where` verb | the line said the item closed in a tasks-axi backend while it really closed in a project's `br` tracker |
 | `bin/fm-session-start.sh` | the compact backlog listing runs through the selected runner and, under `br`, needs no `data/backlog.md` | the digest shows the `br` queue instead of reporting the backlog absent |
 | `docs/configuration.md` | a "Beads per project (`br`)" subsection under "Backlog backend" | documents the `br` value and `config/br-projects` |
 | `docs/configuration.md` | one sentence in "Beads per project (`br`)" pointing at the `fleet-beads` skill | says where task creation under `br` is documented |
