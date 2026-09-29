@@ -414,15 +414,18 @@ case "${1:-} ${2:-}" in
 esac
 exit 0
 SH
-  cat > "$fakebin/quota-axi" <<'SH'
+  cat > "$fakebin/aub" <<'SH'
 #!/usr/bin/env bash
 if [ "${1:-}" = --version ]; then
-  printf '%s\n' '0.1.51'
+  printf '%s\n' 'aub 0.1.0 (fake)'
   exit 0
+fi
+if [ "$*" = 'status --format json' ]; then
+  printf '%s\n' '{"schema":5,"generated_at":1,"accounts":[{"account":"primary","freshness":"fresh","windows":[]}]}'
 fi
 exit 0
 SH
-  chmod +x "$fakebin/gh-axi" "$fakebin/no-mistakes" "$fakebin/tasks-axi" "$fakebin/quota-axi"
+  chmod +x "$fakebin/gh-axi" "$fakebin/no-mistakes" "$fakebin/tasks-axi" "$fakebin/aub"
 }
 
 new_git_world() {
