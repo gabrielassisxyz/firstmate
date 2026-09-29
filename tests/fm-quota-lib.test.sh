@@ -69,11 +69,11 @@ pass "fm_quota_json_valid accepts the captured envelope and rejects schema 4 and
 cat > "$HOME_DIR/config/accounts" <<'ACCOUNTS'
 # accounts for the lookup
 primary claude default CLAUDE_CONFIG_DIR=/accounts/primary
-gmail claude CLAUDE_CONFIG_DIR=/accounts/gmail
+second claude CLAUDE_CONFIG_DIR=/accounts/second
 broken claude
 codex-primary codex CODEX_HOME=/accounts/codex-primary
 ACCOUNTS
-assert_equals $'primary\ngmail' "$(lib "fm_quota_accounts_for_harness '$HOME_DIR/config' claude")" "every valid account of the harness, in file order"
+assert_equals $'primary\nsecond' "$(lib "fm_quota_accounts_for_harness '$HOME_DIR/config' claude")" "every valid account of the harness, in file order"
 assert_equals 'codex-primary' "$(lib "fm_quota_accounts_for_harness '$HOME_DIR/config' codex")" "another harness has its own set"
 assert_equals '' "$(lib "fm_quota_accounts_for_harness '$HOME_DIR/config' pi")" "a harness without accounts has an empty set"
 assert_equals '' "$(lib "fm_quota_accounts_for_harness '$TMP_ROOT/no-config' claude")" "an absent config/accounts is an empty set"
@@ -84,8 +84,8 @@ pass "the harness-to-account-set lookup reads config/accounts"
 
 # --- the typed resolver over the two-account example --------------------------------
 # primary: fresh, 40% remaining, burn 1.5, 60% elapsed (reserve -20).
-# gmail:   fresh, 95% remaining, burn 0.2, 10% elapsed (reserve 77).
-two_accounts() {  # <out> <primary freshness> <gmail freshness>
+# second:   fresh, 95% remaining, burn 0.2, 10% elapsed (reserve 77).
+two_accounts() {  # <out> <primary freshness> <second freshness>
   jq --arg pf "$2" --arg gf "$3" '
     .generated_at as $now |
     def acct($name; $fresh; $r; $b; $e):
@@ -95,12 +95,12 @@ two_accounts() {  # <out> <primary freshness> <gmail freshness>
          quota_used_ppm: ((100 - $r) * 10000),
          resets_at_nanos: ($now + (1 - $e) * 604800000000000),
          nominal_duration_nanos: 604800000000000, burn_rate: $b, observation_freshness: $fresh}]};
-    .accounts = [acct("primary"; $pf; 40; "1.5"; 0.6), acct("gmail"; $gf; 95; "0.2"; 0.1)]
+    .accounts = [acct("primary"; $pf; 40; "1.5"; 0.6), acct("second"; $gf; 95; "0.2"; 0.1)]
   ' "$FIXTURE" > "$1"
 }
 cat > "$HOME_DIR/config/accounts" <<'ACCOUNTS'
 primary claude CLAUDE_CONFIG_DIR=/accounts/primary
-gmail claude CLAUDE_CONFIG_DIR=/accounts/gmail
+second claude CLAUDE_CONFIG_DIR=/accounts/second
 codex-primary codex CODEX_HOME=/accounts/codex-primary
 ACCOUNTS
 printf '%s\n' '{"rules":[{"when":"Claude work.","use":{"harness":"claude","model":"opus"}}]}' > "$HOME_DIR/config/crew-dispatch.json"
@@ -124,14 +124,14 @@ resolve() {  # <fixture>
 two_accounts "$TMP_ROOT/fresh-fresh.json" fresh fresh
 out=$(resolve "$TMP_ROOT/fresh-fresh.json")
 assert_contains "$out" '  status: clear' "fresh/fresh resolves"
-assert_contains "$out" '  account: gmail' "the fresher, emptier account wins"
-assert_contains "$out" "  profile: --harness 'claude' --model 'opus' --account 'gmail'" "the chosen account reaches fm-spawn.sh"
+assert_contains "$out" '  account: second' "the fresher, emptier account wins"
+assert_contains "$out" "  profile: --harness 'claude' --model 'opus' --account 'second'" "the chosen account reaches fm-spawn.sh"
 assert_contains "$out" 'account=primary  freshness=fresh  scope=account_wide  remaining=40%  burn=1.5  elapsed=60%  reserve=-20' "primary's reserve is shown"
-assert_contains "$out" 'account=gmail  freshness=fresh  scope=account_wide  remaining=95%  burn=0.2  elapsed=10%  reserve=77' "gmail's reserve is shown"
+assert_contains "$out" 'account=second  freshness=fresh  scope=account_wide  remaining=95%  burn=0.2  elapsed=10%  reserve=77' "second's reserve is shown"
 
 two_accounts "$TMP_ROOT/fresh-stale.json" fresh stale
 out=$(resolve "$TMP_ROOT/fresh-stale.json")
-assert_contains "$out" '  account: primary' "a stale gmail yields to the only fresh account"
+assert_contains "$out" '  account: primary' "a stale second yields to the only fresh account"
 
 two_accounts "$TMP_ROOT/auth-auth.json" auth_required auth_required
 out=$(resolve "$TMP_ROOT/auth-auth.json")
@@ -142,15 +142,15 @@ pass "the typed resolver ranks the two-account example and emits the chosen acco
 # --- the chooser and the quota watch against the captured envelope -----------------
 cat > "$HOME_DIR/config/accounts" <<'ACCOUNTS'
 primary claude CLAUDE_CONFIG_DIR=/accounts/primary
-gmail claude CLAUDE_CONFIG_DIR=/accounts/gmail
-bianca claude CLAUDE_CONFIG_DIR=/accounts/bianca
+second claude CLAUDE_CONFIG_DIR=/accounts/second
+third claude CLAUDE_CONFIG_DIR=/accounts/third
 codex-primary codex CODEX_HOME=/accounts/codex-primary
-codex-bianca codex CODEX_HOME=/accounts/codex-bianca
+codex-second codex CODEX_HOME=/accounts/codex-second
 ACCOUNTS
 code=0
 out=$(FM_HOME="$HOME_DIR" "$ROOT/bin/fm-quota-choose.sh" --snapshot "$FIXTURE" claude:opus codex:gpt-5.5 2>&1) || code=$?
 expect_code 0 "$code" "the chooser runs against the captured envelope"
-assert_equals 'claude opus bianca' "$out" "the chooser names the account the ranking rule picks"
+assert_equals 'claude opus third' "$out" "the chooser names the account the ranking rule picks"
 
 code=0
 out=$(PATH="$FAKEBIN:$NO_AUB_PATH" "$ROOT/bin/fm-procevent-quota.sh" poll --interval 1 --threshold 90 --timeout 5 2>&1) || code=$?

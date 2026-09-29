@@ -74,7 +74,7 @@ cp "$BASE_RULES" "$RULES"
 # kimi has no account at all, so its profile is measured nowhere.
 cat > "$HOME_DIR/config/accounts" <<'ACCOUNTS'
 primary claude CLAUDE_CONFIG_DIR=/accounts/primary
-gmail claude CLAUDE_CONFIG_DIR=/accounts/gmail
+second claude CLAUDE_CONFIG_DIR=/accounts/second
 codex-primary codex CODEX_HOME=/accounts/codex-primary
 cursor-main cursor CURSOR_CONFIG_DIR=/accounts/cursor-main
 ACCOUNTS
@@ -104,14 +104,14 @@ write_aub() {
      knowledge_at: $now, ledger_generation: 1, accounts: .}' > "$path"
 }
 
-# The base snapshot: reserves are primary -20, gmail 77, codex-primary -19,
+# The base snapshot: reserves are primary -20, second 77, codex-primary -19,
 # cursor-main 86, agy 64, google 72; primary also carries a 15% fable window.
 base_accounts() {
   aub_account primary fresh 40 1.5 0.6 | jq -c --argjson now "$NOW" --argjson week "$WEEK" '
     .windows += [{semantic_key: "weekly_scoped_fable", scope: "model", model: "fable",
       quota_used_ppm: 850000, resets_at_nanos: ($now + $week / 2), nominal_duration_nanos: $week,
       burn_rate: "1.0", observation_freshness: "fresh"}]'
-  aub_account gmail fresh 95 0.2 0.1
+  aub_account second fresh 95 0.2 0.1
   aub_account codex-primary fresh 31 1.0 0.5
   aub_account cursor-main fresh 91 0.1 0.5
   aub_account agy fresh 64 0 0.5
@@ -255,7 +255,7 @@ assert_contains "$out" '  rule: rule_4 (A simple bug fix with a stated root caus
 assert_contains "$out" '  account: cursor-main' "the chosen account is named"
 assert_contains "$out" "  profile: --harness 'cursor' --model 'cursor-grok-4.6-medium' --account 'cursor-main'" "the highest reserve wins and its account reaches the profile"
 assert_contains "$out" 'candidate: claude:sonnet  account=primary  freshness=fresh  scope=account_wide  remaining=40%  burn=1.5  elapsed=60%  reserve=-20  -> eligible' "every account of a profile is a candidate"
-assert_contains "$out" 'candidate: claude:sonnet  account=gmail  freshness=fresh  scope=account_wide  remaining=95%  burn=0.2  elapsed=10%  reserve=77  -> eligible' "each account carries its own evidence"
+assert_contains "$out" 'candidate: claude:sonnet  account=second  freshness=fresh  scope=account_wide  remaining=95%  burn=0.2  elapsed=10%  reserve=77  -> eligible' "each account carries its own evidence"
 assert_contains "$out" 'candidate: kimi:kimi-code/k3  -> eligible, unranked: no account for harness kimi: declare one in config/accounts or name provider on the profile: disclosed uncertainty' "a harness with no account stays listed as eligible and unranked"
 assert_contains "$out" '  note: 1 eligible candidate(s) unranked (kimi)' "clear results flag eligible unranked candidates once"
 assert_not_contains "$out" '--effort' "cursor profile without effort emits no --effort"
@@ -468,7 +468,7 @@ TYPESAFE_API_KEY=$KEY run code out err "$BRIEF"
 expect_code 0 "$code" "ambiguous exits 0"
 assert_contains "$out" '  status: ambiguous' "below the floor is ambiguous"
 assert_contains "$out" '  reason: confidence 0.41 below floor 0.6' "ambiguous names the floor"
-assert_contains "$out" 'candidate: claude:sonnet  account=gmail  freshness=fresh  scope=account_wide  remaining=95%' "ambiguous preserves matched candidate evidence"
+assert_contains "$out" 'candidate: claude:sonnet  account=second  freshness=fresh  scope=account_wide  remaining=95%' "ambiguous preserves matched candidate evidence"
 assert_contains "$out" 'candidate: kimi:kimi-code/k3  -> eligible, unranked: no account for harness kimi' "ambiguous preserves eligible unranked candidate evidence"
 assert_not_contains "$out" '  profile:' "ambiguous emits no profile line"
 assert_not_contains "$out" '  account:' "ambiguous names no chosen account"
@@ -623,7 +623,7 @@ TYPESAFE_API_KEY=$KEY run code out err "$BRIEF"
 expect_code 0 "$code" "escalate exits 0"
 assert_contains "$out" '  status: escalate' "approval-gated rule escalates"
 assert_contains "$out" "  reason: rule requires the captain's explicit approval before dispatch" "escalate names the approval gate"
-assert_contains "$out" 'candidate: claude:fable  account=gmail  freshness=fresh  scope=account_wide  remaining=95%  burn=0.2  elapsed=10%  reserve=77  -> eligible' "approval escalation preserves matched candidate evidence"
+assert_contains "$out" 'candidate: claude:fable  account=second  freshness=fresh  scope=account_wide  remaining=95%  burn=0.2  elapsed=10%  reserve=77  -> eligible' "approval escalation preserves matched candidate evidence"
 assert_not_contains "$out" '  profile:' "escalate emits no profile line"
 pass "escalate: a rule declared approval: captain never yields a profile"
 
@@ -675,7 +675,7 @@ STALE_CURSOR="$TMP_ROOT/stale-cursor.json"
 with_account "$STALE_CURSOR" '.freshness = "stale"' cursor-main
 TYPESAFE_API_KEY=$KEY AUB_FIXTURE="$STALE_CURSOR" run code out err "$BRIEF"
 assert_contains "$out" 'candidate: cursor:cursor-grok-4.6-medium  account=cursor-main  freshness=stale  scope=account_wide  remaining=91%  burn=0.1  elapsed=50%  reserve=86  -> eligible, stale: ranked only when no fresh account is eligible' "a stale account with the highest reserve is held back"
-assert_contains "$out" "  profile: --harness 'claude' --model 'sonnet' --effort 'high' --account 'gmail'" "the best fresh account wins over a stale one"
+assert_contains "$out" "  profile: --harness 'claude' --model 'sonnet' --effort 'high' --account 'second'" "the best fresh account wins over a stale one"
 
 ALL_STALE="$TMP_ROOT/all-stale.json"
 jq '.accounts[].freshness = "stale"' "$QUOTA" > "$ALL_STALE"
@@ -688,7 +688,7 @@ AUTH_CURSOR="$TMP_ROOT/auth-cursor.json"
 with_account "$AUTH_CURSOR" '.freshness = "auth_required" | .reason = "token_expired"' cursor-main
 TYPESAFE_API_KEY=$KEY AUB_FIXTURE="$AUTH_CURSOR" run code out err "$BRIEF"
 assert_contains "$out" 'candidate: cursor:cursor-grok-4.6-medium  account=cursor-main  freshness=auth_required  -> not eligible: auth_required (token_expired)' "an auth_required account is never eligible"
-assert_contains "$out" "  profile: --harness 'claude' --model 'sonnet' --effort 'high' --account 'gmail'" "the next account wins"
+assert_contains "$out" "  profile: --harness 'claude' --model 'sonnet' --effort 'high' --account 'second'" "the next account wins"
 pass "freshness: fresh first, stale only as a fallback, auth_required never"
 
 # --- remaining, untriggered windows, and absent accounts -----------------------
@@ -698,7 +698,7 @@ with_account "$EMPTY_CURSOR" '.windows[0].quota_used_ppm = 1000000' cursor-main
 TYPESAFE_API_KEY=$KEY AUB_FIXTURE="$EMPTY_CURSOR" run code out err "$BRIEF"
 assert_contains "$out" 'candidate: cursor:cursor-grok-4.6-medium  account=cursor-main  freshness=fresh  scope=account_wide  remaining=0%' "an empty limiting window is reported"
 assert_contains "$out" '-> not eligible: 0% remaining at account_wide' "an empty limiting window makes the account ineligible"
-assert_contains "$out" " --account 'gmail'" "an account with quota left wins"
+assert_contains "$out" " --account 'second'" "an account with quota left wins"
 
 UNTRIGGERED="$TMP_ROOT/untriggered.json"
 with_account "$UNTRIGGERED" '.windows[0].quota_used_ppm = 0 | .windows[0].resets_at_nanos = null | .windows[0].burn_rate = null | .limiting_window.burn_rate = null' primary
@@ -719,7 +719,7 @@ pass "remaining, untriggered windows, and absent accounts follow the ranking rul
 # --- profiles that differ only by account are distinct candidates --------------
 reset_log
 PINNED_RULES="$TMP_ROOT/pinned-rules.json"
-printf '%s\n' '{"rules":[{"when":"Pinned.","use":[{"harness":"claude","model":"opus","account":"primary"},{"harness":"claude","model":"opus","account":"gmail"}]}]}' > "$PINNED_RULES"
+printf '%s\n' '{"rules":[{"when":"Pinned.","use":[{"harness":"claude","model":"opus","account":"primary"},{"harness":"claude","model":"opus","account":"second"}]}]}' > "$PINNED_RULES"
 cp "$PINNED_RULES" "$RULES"
 cat > "$RESPONSE" <<'JSON'
 {"model":"jev-1.13.0","answers":{"rule":{"type":"choice","choice":"rule_1","confidence":0.99,"probabilities":{"rule_1":0.99,"default":0.01}}},"usage":{"input_tokens":100,"output_tokens":60}}
@@ -727,7 +727,7 @@ JSON
 TYPESAFE_API_KEY=$KEY run code out err "$BRIEF"
 expect_code 0 "$code" "profiles that differ only by account are valid"
 assert_equals '2' "$(grep -c '^  candidate: claude:opus' <<<"$out")" "each pinned account is one candidate"
-assert_contains "$out" "  profile: --harness 'claude' --model 'opus' --account 'gmail'" "the pinned account with the higher reserve wins"
+assert_contains "$out" "  profile: --harness 'claude' --model 'opus' --account 'second'" "the pinned account with the higher reserve wins"
 cp "$BASE_RULES" "$RULES"
 pass "profiles that differ only by account are distinct candidates"
 
@@ -747,9 +747,9 @@ jq --argjson c "$(aub_account cursor-main fresh 95 0.2 0.1)" '(.accounts[] | sel
 TYPESAFE_API_KEY=$KEY AUB_FIXTURE="$TIE" run code out err "$BRIEF"
 assert_contains "$out" '  status: escalate' "tie escalates"
 assert_contains "$out" '  reason: genuine reserve tie' "tie is named"
-jq '(.accounts[] | select(.account == "gmail") | .observation_age_nanos) = 1' "$TIE" > "$TMP_ROOT/tie-fresher.json"
+jq '(.accounts[] | select(.account == "second") | .observation_age_nanos) = 1' "$TIE" > "$TMP_ROOT/tie-fresher.json"
 TYPESAFE_API_KEY=$KEY AUB_FIXTURE="$TMP_ROOT/tie-fresher.json" run code out err "$BRIEF"
-assert_contains "$out" " --account 'gmail'" "an equal reserve and remaining falls to the fresher observation"
+assert_contains "$out" " --account 'second'" "an equal reserve and remaining falls to the fresher observation"
 pass "tie: equal evidence never breaks by array order"
 
 # --- nothing rankable escalates, and all-auth is an error -------------------------
@@ -769,7 +769,7 @@ jq '.accounts[].freshness = "auth_required"' "$QUOTA" > "$TMP_ROOT/all-auth.json
 TYPESAFE_API_KEY=$KEY AUB_FIXTURE="$TMP_ROOT/all-auth.json" run code out err "$BRIEF"
 expect_code 0 "$code" "every account needing authentication exits 0"
 assert_contains "$out" '  status: error' "every candidate account needing authentication is an error"
-assert_contains "$out" '  reason: every candidate account needs authentication in aub: gmail, primary' "the accounts needing a login are named"
+assert_contains "$out" '  reason: every candidate account needs authentication in aub: primary, second' "the accounts needing a login are named"
 assert_not_contains "$out" '  profile:' "an all-auth result emits no profile"
 cp "$BASE_RULES" "$RULES"
 pass "no rankable candidate escalates, and all-auth candidates are an error"
@@ -895,7 +895,7 @@ for bad in \
   '{"rules":[{"when":"x","use":{"harness":"spaceship"}}]}|each use profile must name a verified harness' \
   '{"rules":[{"when":"x","use":{"harness":"grok","effort":"max"}}]}|each use profile effort must be supported by its harness and model' \
   '{"rules":[{"when":"x","use":{"harness":"claude","account":""}}]}|each use profile needs harness; model, effort, account, and floor must be well formed, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\z when present' \
-  '{"rules":[{"when":"x","use":[{"harness":"claude","account":"gmail"},{"harness":"claude","account":"gmail"}]}]}|each rule use must not contain duplicate harness, model, effort, and account profiles'; do
+  '{"rules":[{"when":"x","use":[{"harness":"claude","account":"second"},{"harness":"claude","account":"second"}]}]}|each rule use must not contain duplicate harness, model, effort, and account profiles'; do
   printf '%s\n' "${bad%%|*}" > "$RULES"
   TYPESAFE_API_KEY=$KEY run code out err "$BRIEF"
   expect_code 2 "$code" "malformed rules exit 2: ${bad#*|}"

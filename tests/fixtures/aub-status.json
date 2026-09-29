@@ -61,7 +61,7 @@
       ]
     },
     {
-      "account": "gmail",
+      "account": "second",
       "freshness": "fresh",
       "remaining": {
         "value": "950000",
@@ -102,7 +102,7 @@
       ]
     },
     {
-      "account": "bianca",
+      "account": "third",
       "freshness": "fresh",
       "remaining": {
         "value": "1000000",
@@ -184,7 +184,7 @@
       ]
     },
     {
-      "account": "codex-bianca",
+      "account": "codex-second",
       "freshness": "fresh",
       "remaining": {
         "value": "1000000",

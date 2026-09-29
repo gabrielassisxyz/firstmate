@@ -47,8 +47,8 @@ case "${AUB_MODE:-}" in
   no-windows) printf '{"schema":5,"generated_at":1,"accounts":[{"account":"codex-primary","freshness":"fresh"}]}\n' ;;
   duplicate) { account codex-primary fresh 50; account codex-primary fresh 50; } | envelope ;;
   types) account codex-primary fresh 50 | jq -c '.windows[0].quota_used_ppm = "0"' | envelope ;;
-  exhausted-detail) { account codex-primary fresh 5; account gmail fresh 50; } | envelope ;;
-  auth) { account codex-primary auth_required 0; account gmail fresh 50; } | envelope ;;
+  exhausted-detail) { account codex-primary fresh 5; account second fresh 50; } | envelope ;;
+  auth) { account codex-primary auth_required 0; account second fresh 50; } | envelope ;;
   at-threshold)
     remaining=9
     [ "$count" -ne 1 ] || remaining=10
@@ -57,7 +57,7 @@ case "${AUB_MODE:-}" in
   *)
     codex=0
     [ "$count" -ne 1 ] || codex=20
-    { account codex-primary fresh "$codex"; account gmail fresh 50; } | envelope
+    { account codex-primary fresh "$codex"; account second fresh 50; } | envelope
     ;;
 esac
 SH
@@ -110,8 +110,8 @@ printf '%s\n' "$out" | grep -qx 'condition_polls: 2' || fail "aggregate watch di
 detail=$(printf '%s\n' "$out" | sed -n 's/^detail: //p')
 printf '%s\n' "$detail" | jq -e '
   .account == "aggregate" and
-  ([.summary[].account] == ["codex-primary", "gmail"]) and
-  ([.summary[] | select(.account == "gmail") | .tightest.remaining] == [50])
+  ([.summary[].account] == ["codex-primary", "second"]) and
+  ([.summary[] | select(.account == "second") | .tightest.remaining] == [50])
 ' >/dev/null || fail "aggregate detail did not keep each account separate: $detail"
 ok "aggregate watch reads every account without combining them"
 

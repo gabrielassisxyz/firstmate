@@ -92,28 +92,28 @@ run_case() {
   printf 'ok - %s\n' "$label"
 }
 
-COMMON="Both candidates are the same profile, harness claude with model opus, and config/accounts declares the two Claude accounts primary and gmail. The authoritative catalog already proves the model supported. The likely task-completion horizon is two hours with established confidence, and both limiting windows reset after it. Do not use other vendor or model commands and do not modify files."
+COMMON="Both candidates are the same profile, harness claude with model opus, and config/accounts declares the two Claude accounts primary and second. The authoritative catalog already proves the model supported. The likely task-completion horizon is two hours with established confidence, and both limiting windows reset after it. Do not use other vendor or model commands and do not modify files."
 
-write_fixture "$(account primary fresh 40 1.5 0.6)" "$(account gmail fresh 95 0.2 0.1)"
+write_fixture "$(account primary fresh 40 1.5 0.6)" "$(account second fresh 95 0.2 0.1)"
 run_case \
   "the fresher, emptier account wins by reserve" \
-  "SELECTED=gmail" \
+  "SELECTED=second" \
   "Resolve this matched dispatch profile array now. Load quota-array-dispatch and take its one quota snapshot exactly once. $COMMON Return one line per account in the exact form FACT=<account>|remaining=<r>|reserve=<reserve rounded to an integer>, then an exact final line SELECTED=<account>." \
   "FACT=primary|remaining=40|reserve=-20" \
-  "FACT=gmail|remaining=95|reserve=77"
+  "FACT=second|remaining=95|reserve=77"
 
-write_fixture "$(account primary fresh 40 1.5 0.6)" "$(account gmail stale 95 0.2 0.1)"
+write_fixture "$(account primary fresh 40 1.5 0.6)" "$(account second stale 95 0.2 0.1)"
 run_case \
   "a stale account ranks only when no fresh one is eligible" \
   "SELECTED=primary" \
   "Resolve this matched dispatch profile array now. Load quota-array-dispatch and take its one quota snapshot exactly once. $COMMON Assume primary's runway passes the feasibility gate for this task. Return one line per account in the exact form FACT=<account>|freshness=<freshness>, then an exact final line SELECTED=<account>." \
   "FACT=primary|freshness=fresh" \
-  "FACT=gmail|freshness=stale"
+  "FACT=second|freshness=stale"
 
-write_fixture "$(account primary fresh 40 1.5 0.6)" "$(account gmail auth_required 95 0.2 0.1)"
+write_fixture "$(account primary fresh 40 1.5 0.6)" "$(account second auth_required 95 0.2 0.1)"
 run_case \
   "an auth_required account is never chosen" \
   "SELECTED=primary" \
   "Resolve this matched dispatch profile array now. Load quota-array-dispatch and take its one quota snapshot exactly once. $COMMON Assume primary's runway passes the feasibility gate for this task. Return one line per account in the exact form FACT=<account>|eligible=<yes|no>, then an exact final line SELECTED=<account>." \
   "FACT=primary|eligible=yes" \
-  "FACT=gmail|eligible=no"
+  "FACT=second|eligible=no"

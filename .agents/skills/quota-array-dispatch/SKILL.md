@@ -109,12 +109,12 @@ Never resolve that terminal uncertainty by treating unknown as healthy or by cho
 
 ### Worked example
 
-A rule resolves to one profile, `claude` with model `opus`, and `config/accounts` declares two Claude accounts, `primary` and `gmail`.
+A rule resolves to one profile, `claude` with model `opus`, and `config/accounts` declares two Claude accounts, `primary` and `second`.
 The snapshot reports both fresh.
 `primary`'s limiting window is 60% elapsed with 40% remaining at burn 1.5, so its reserve is `40 - 1.5 × 0.4 × 100 = -20`: it is on course to run dry before its reset.
-`gmail`'s limiting window is 10% elapsed with 95% remaining at burn 0.2, so its reserve is `95 - 0.2 × 0.9 × 100 = 77`.
-Both are eligible, `gmail` ranks first, and the spawn is `fm-spawn.sh ... --harness claude --model opus --account gmail`.
-Had `gmail` been `stale`, `primary` would be the only fresh eligible account and would be chosen despite its negative reserve, unless the runway gate blocks it for this task's horizon.
+`second`'s limiting window is 10% elapsed with 95% remaining at burn 0.2, so its reserve is `95 - 0.2 × 0.9 × 100 = 77`.
+Both are eligible, `second` ranks first, and the spawn is `fm-spawn.sh ... --harness claude --model opus --account second`.
+Had `second` been `stale`, `primary` would be the only fresh eligible account and would be chosen despite its negative reserve, unless the runway gate blocks it for this task's horizon.
 
 Genuine ties: stop and report every tied candidate for captain choice.
 Do not select by array order, harness name, or another arbitrary identity ordering.
