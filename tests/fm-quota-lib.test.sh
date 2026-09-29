@@ -56,10 +56,10 @@ assert_contains "$err" 'aub: status --format json did not answer a schema 5 snap
 pass "fm_quota_source_compatible accepts the captured envelope and names aub when it is absent"
 
 # --- the validator -----------------------------------------------------------------
-lib 'fm_quota_json_valid < "$AUB_FIXTURE"' || fail "the captured envelope is valid"
+lib "fm_quota_json_valid < '$FIXTURE'" || fail "the captured envelope is valid"
 jq '.accounts[0] |= del(.windows)' "$FIXTURE" > "$TMP_ROOT/no-windows.json"
 for bad in "$TMP_ROOT/schema4.json" "$TMP_ROOT/no-windows.json"; do
-  if AUB_FIXTURE="$bad" lib 'fm_quota_json_valid < "$AUB_FIXTURE"'; then
+  if lib "fm_quota_json_valid < '$bad'"; then
     fail "an invalid envelope was accepted: $bad"
   fi
 done
