@@ -34,6 +34,7 @@ The rest of `AGENTS.md` is upstream's contract and stays as upstream wrote it. T
 | `.agents/skills/bootstrap-diagnostics/SKILL.md`, `.agents/skills/agent-skill-trigger-index/SKILL.md` | the `ACCOUNTS: invalid` diagnostic line | the new bootstrap line has a handling rule and a trigger |
 | `docs/documentation-audiences.json` | a surface entry for `FORK.md` | the documentation audience check refuses an unclassified surface |
 | `tests/fm-bootstrap.test.sh`, `tests/fm-control-relaunch.test.sh` | one case each: the `ACCOUNTS` diagnostic, and a relaunch keeping its recorded account | covers the bootstrap and relaunch halves of named accounts |
+| `.github/workflows/ci.yml` | both Pi installs pin `@earendil-works/pi-coding-agent@0.87.1` | Pi 0.99 changed its stock tool rendering and the Pi extension tests fail against it; an unpinned install turned every pull request red on the day it was published |
 
 ## Repository settings that differ from upstream
 
