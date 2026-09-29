@@ -175,11 +175,43 @@ code=0
 expect_code 1 "$code" "show of an unlisted prefix"
 assert_grep "code: NOT_FOUND" "$TMP_ROOT/nf.out" "an unlisted prefix carries the not-found marker"
 assert_equals 1 "$(wc -l < "$TMP_ROOT/nf.err" | tr -d ' ')" "an unlisted prefix prints one stderr line"
-assert_grep "'zz'" "$TMP_ROOT/nf.err" "the stderr line names the prefix"
+assert_grep "'zz-1'" "$TMP_ROOT/nf.err" "the stderr line names the id"
 assert_grep "$CONFIG/br-projects" "$TMP_ROOT/nf.err" "the stderr line names the tracker table"
 assert_equals "not_found|||refused" "$(probe zz-1 2>/dev/null)" "probe of an unlisted prefix"
 assert_equals "not_found|||refused" "$(probe t-zzzz 2>/dev/null)" "probe of an id the tracker lacks"
 pass "an unlisted prefix or unknown bead is not_found, and the prefix case names the table"
+
+# --- prefix resolution -------------------------------------------------------
+
+SLUGGED="$TMP_ROOT/daytrace"
+fm_git_init_commit "$SLUGGED"
+(cd "$SLUGGED" && br init --prefix daytrace >/dev/null 2>&1) || fail "br init failed in the slugged tracker"
+SLUG_ID=$(cd "$SLUGGED" && br create "slugged" --slug session-events 2>/dev/null | sed -n 's/.* \(daytrace-session-events-[a-z0-9]*\):.*/\1/p')
+[ -n "$SLUG_ID" ] || fail "br create --slug printed no id"
+ARCH="$TMP_ROOT/arch"
+ARCHIVE="$TMP_ROOT/archive"
+fm_git_init_commit "$ARCH"
+fm_git_init_commit "$ARCHIVE"
+(cd "$ARCH" && br init --prefix arch >/dev/null 2>&1) || fail "br init failed in the arch tracker"
+(cd "$ARCHIVE" && br init --prefix archive >/dev/null 2>&1) || fail "br init failed in the archive tracker"
+ARCH_ID=$(cd "$ARCH" && br q "arch bead") || fail "br q in arch failed"
+ARCHIVE_ID=$(cd "$ARCHIVE" && br q "archive bead") || fail "br q in archive failed"
+cp "$CONFIG/br-projects" "$TMP_ROOT/br-projects.saved"
+printf 'arch %s\narchive %s\ndaytrace %s\nt %s\n' "$ARCH" "$ARCHIVE" "$SLUGGED" "$TRACKER" > "$CONFIG/br-projects"
+
+assert_contains "$("$ADAPTER" show "$SLUG_ID")" "state:" "a slugged id resolves to its tracker"
+code=0
+"$ADAPTER" show daytrace-nope > "$TMP_ROOT/dn.out" 2> "$TMP_ROOT/dn.err" || code=$?
+expect_code 1 "$code" "show of an id the slugged tracker lacks"
+assert_grep "code: NOT_FOUND" "$TMP_ROOT/dn.out" "an id a listed tracker lacks is not found"
+assert_no_grep "br-projects" "$TMP_ROOT/dn.err" "an id under a listed prefix is not reported as an unlisted prefix"
+assert_contains "$("$ADAPTER" show "$ARCHIVE_ID")" "state:" "the longer overlapping prefix wins"
+assert_contains "$("$ADAPTER" show "$ARCH_ID")" "state:" "the shorter overlapping prefix still resolves"
+code=0
+"$ADAPTER" show "archive-${ARCH_ID#arch-}" > /dev/null 2>&1 || code=$?
+expect_code 1 "$code" "an arch hash under archive- goes to the archive tracker"
+cp "$TMP_ROOT/br-projects.saved" "$CONFIG/br-projects"
+pass "an id resolves by the longest listed prefix, slug or not"
 
 # --- lists -------------------------------------------------------------------
 

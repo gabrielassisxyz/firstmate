@@ -396,7 +396,7 @@ On the default markdown adapter, tasks-axi and manual edits produce the same `##
 ### Beads per project (`br`)
 
 Set `config/backlog-backend` to `br` to keep no firstmate backlog at all: every backlog read and mutation goes to the `br` tracker of the project a task id belongs to, and tasks-axi is never run.
-The local, gitignored `config/br-projects` lists one tracker per line as `<prefix> <absolute path>`, for example `aub /path/to/agent-usage-book`; an id's prefix is everything before its last `-`, and an id whose prefix is not listed is reported as absent.
+The local, gitignored `config/br-projects` lists one tracker per line as `<prefix> <absolute path>`, for example `aub /path/to/agent-usage-book`; an id belongs to the longest listed prefix it starts with followed by `-`, and an id whose prefix is not listed is reported as absent.
 The backend is available when `br --version` succeeds and that file lists at least one tracker; otherwise lifecycle work refuses and the session-start digest names the missing piece.
 
 A bead's `in_progress` status is In flight, `closed` is Done, a deferred bead is held for the captain, and the Queued list is what `ready-landed --repo <path> --json` prints for each tracker, so a bead whose blocker merely closed without landing is not dispatchable.
