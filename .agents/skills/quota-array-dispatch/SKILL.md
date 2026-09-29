@@ -53,7 +53,8 @@ Below-floor is rare: bootstrap enforces `FM_QUOTA_AXI_MIN` and normally reports 
 `--json` is a defensive belt, not a habit; never reach for it because it feels more complete.
 Read `quota-axi auth --json` only when a candidate's credential surface is in question.
 
-For each candidate, preserve explicit `harness`, `model`, and `provider`; `harness-adapters` owns identity, and model/provider never infer harness.
+For each candidate, preserve explicit `harness`, `model`, `provider`, and `account`; `harness-adapters` owns identity, and model/provider never infer harness.
+Hand the chosen profile to `fm-spawn.sh` as `--harness`, `--model`, and `--effort`, plus `--account` when the profile names one ([named worker accounts](../../../docs/configuration.md#named-worker-accounts-configaccounts)).
 
 ## Three gates, then spendPriority
 
@@ -127,7 +128,7 @@ Do not read `aheadWindowIds`, `behindWindowIds`, `onPaceWindowIds`, `limitingWin
 
 Genuine ties: stop and report every tied candidate for captain choice.
 Do not select by array order, harness name, or another arbitrary identity ordering.
-Report duplicate concrete profiles as a configuration error.
+Report duplicate concrete profiles, the same harness, model, effort, and account, as a configuration error.
 
 Account for every candidate visibly before selecting or escalating, naming its catalog evidence, provider relation, applicable quota and authentication facts, remaining uncertainty, fit and reasoning class, `spendPriority`, and runway-versus-horizon result.
 A blocked credential report must name `harness`, `model`, authentication surface, and concrete failure evidence; never emit a bare `Grok unauthenticated` statement.

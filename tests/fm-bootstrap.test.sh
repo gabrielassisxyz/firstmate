@@ -1104,6 +1104,30 @@ test_crew_dispatch_active_rules_are_verbose_bootstrap_info() {
   pass "bootstrap surfaces active crew-dispatch rules only as verbose BOOTSTRAP_INFO"
 }
 
+test_accounts_validation() {
+  local case_dir fakebin out expect
+  case_dir="$TMP_ROOT/accounts"
+  mkdir -p "$case_dir/home/config"
+  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
+  fakebin=$(make_fake_toolchain "$case_dir")
+  cat > "$case_dir/home/config/accounts" <<'EOF'
+# <name> <harness> [default] KEY=VALUE [KEY=VALUE ...]
+claude-a claude default HOME=/path/to/profile-a
+EOF
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  [ -z "$out" ] || fail "a valid accounts table should stay silent, got: $out"
+  cat >> "$case_dir/home/config/accounts" <<'EOF'
+broken claude HOME=/path/to/profile-b notapair
+lowkey claude home=/path/to/profile-b
+EOF
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  expect="ACCOUNTS: invalid config/accounts line 3 - token 'notapair' is not KEY=VALUE"$'\n'"ACCOUNTS: invalid config/accounts line 4 - key 'home' is not [A-Z_][A-Z0-9_]*"
+  [ "$out" = "$expect" ] || fail "malformed accounts lines should be reported by file and line"$'\n'"expected: $expect"$'\n'"actual:   $out"
+  pass "bootstrap reports each malformed config/accounts line and stays silent on a valid table"
+}
+
 test_crew_dispatch_validation() {
   local label body expect mode case_dir fakebin out child_env n
   n=0
@@ -1267,3 +1291,4 @@ test_network_phases_record_per_step_elapsed_times
 test_tasks_axi_verdict_handoff_is_consumed_once
 test_crew_dispatch_active_rules_are_verbose_bootstrap_info
 test_crew_dispatch_validation
+test_accounts_validation

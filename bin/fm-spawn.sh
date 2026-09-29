@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
 # secondmate in its isolated firstmate home.
-# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--branch-prefix <prefix>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
-#        fm-spawn.sh <task-id> <project-dir> --scout [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>]
+# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--branch-prefix <prefix>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--account <name>] [--backend <name>]
+#        fm-spawn.sh <task-id> <project-dir> --scout [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--account <name>] [--backend <name>]
 #        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
 #   spawn and refused on --scout and --secondmate spawns. Firstmate resolves both
@@ -42,7 +42,7 @@
 #   first in the private launch-brief overlay, including the exact task-owned
 #   steering inbox. This never rewrites a project's instruction files or a
 #   secondmate's charter.
-#        fm-spawn.sh <task-id> --relaunch [--harness <name>] [--model <name>] [--effort <level>]
+#        fm-spawn.sh <task-id> --relaunch [--harness <name>] [--model <name>] [--effort <level>] [--account <name>]
 #   --relaunch launches a replacement agent for an EXISTING task into that
 #   task's own recorded worktree, reusing its recorded endpoint when that
 #   endpoint still exists, instead of creating either from scratch. It is
@@ -87,6 +87,8 @@
 #   build agent's variant, keyed to the resolved model, inside the
 #   OPENCODE_CONFIG_CONTENT JSON its launch already carries (config schema
 #   verified on opencode 1.18.32); without a model the axis is recorded but omitted.
+#   --account <name> launches a crewmate or scout under a named account from the
+#   local config/accounts table (see "Named worker accounts" below).
 #   --backend <name> is the explicit runtime session-provider backend for this
 #   exact task only (docs/configuration.md "Runtime backend" owns when that flag
 #   is authorized). Without it, the script resolves FM_BACKEND, then
@@ -262,7 +264,7 @@
 # Batch dispatch: pass one or more `id=repo` pairs instead of a single <id> <project>, e.g.
 #     fm-spawn.sh fix-a-k3=projects/foo add-b-q7=projects/bar [--scout]
 #   Each pair re-execs this script in single-task mode, so the single path stays the only
-#   source of truth; shared --scout/--harness/--model/--effort/--backend/--mode/--yolo
+#   source of truth; shared --scout/--harness/--model/--effort/--account/--backend/--mode/--yolo
 #   applies to every pair. A ship batch therefore carries one delivery contract, and each
 #   pair still checks it against its own brief; a batch spanning modes is two invocations.
 #   If config/crew-dispatch.json exists, shared --harness is required for crewmate
@@ -330,6 +332,22 @@
 #   account_provider=) in the task record and on the spawned line. A local
 #   secondmate reads this launching home's file; pins are never inherited.
 #   bin/fm-worker-account-lib.sh owns parsing, the check, and the shed list.
+# Named worker accounts (config/accounts, --account <name>):
+#   Opt-in and local. For a ship or scout spawn, --account selects that table
+#   line, else the line marked `default` for the spawn's harness applies, else
+#   nothing does and the launch is unchanged. The line's harness must equal the
+#   spawn's, and an unknown, malformed, or mismatched account refuses before
+#   any endpoint, worktree, or record exists. The account's KEY=VALUE pairs
+#   prefix the launch as `env KEY='VALUE' ...`, and the Claude and agy trust
+#   registrations run under the same pairs so they write the store the worker
+#   reads. An account that sets HOME for Claude replaces the CLAUDE_CONFIG_DIR
+#   forward with an explicit unset, because that home is the store. An account
+#   and a worker account pin for the same runner refuse together rather than
+#   choosing between two declared stores. --account on a --secondmate spawn
+#   refuses: config/secondmate-harness governs those. The account is recorded
+#   as account=<name> in the task record and on the spawned line, and a
+#   relaunch on the same harness keeps the recorded account unless --account
+#   names another. bin/fm-accounts-lib.sh owns the table format and selection.
 #   Launch templates live in launch_template() below; placeholders replaced before launch:
 #     __BRIEF__    absolute path to data/<task-id>/brief.md
 #     __CLAUDEPERMFLAG__ the claude permission flag selected by config/claude-permission-mode
@@ -628,6 +646,8 @@ fm_backlog_directory_present "$STATE" "state directory" || {
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
 # shellcheck source=bin/fm-worker-account-lib.sh
 . "$SCRIPT_DIR/fm-worker-account-lib.sh"
+# shellcheck source=bin/fm-accounts-lib.sh
+. "$SCRIPT_DIR/fm-accounts-lib.sh"
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never spawn
 # a direct report (see bin/fm-gate-refuse-lib.sh).
 fm_refuse_if_gate_agent
@@ -639,6 +659,7 @@ KIND_SET=0
 HARNESS_ARG=
 MODEL=
 EFFORT=
+ACCOUNT_ARG=
 BACKEND_ARG=
 MODE=
 YOLO=
@@ -647,6 +668,7 @@ TRACEPARENT_ARG=
 HARNESS_SET=0
 MODEL_SET=0
 EFFORT_SET=0
+ACCOUNT_SET=0
 BACKEND_SET=0
 MODE_SET=0
 YOLO_SET=0
@@ -675,6 +697,10 @@ for a in "$@"; do
     effort)
       EFFORT=$a
       EFFORT_SET=1
+      ;;
+    account)
+      ACCOUNT_ARG=$a
+      ACCOUNT_SET=1
       ;;
     backend)
       BACKEND_ARG=$a
@@ -729,6 +755,11 @@ for a in "$@"; do
     EFFORT=${a#--effort=}
     EFFORT_SET=1
     ;;
+  --account) want_value=account ;;
+  --account=*)
+    ACCOUNT_ARG=${a#--account=}
+    ACCOUNT_SET=1
+    ;;
   --backend) want_value=backend ;;
   --backend=*)
     BACKEND_ARG=${a#--backend=}
@@ -771,6 +802,14 @@ done
 }
 [ "$EFFORT_SET" -eq 0 ] || [ -n "$EFFORT" ] || {
   echo "error: --effort requires a non-empty value" >&2
+  exit 1
+}
+[ "$ACCOUNT_SET" -eq 0 ] || [ -n "$ACCOUNT_ARG" ] || {
+  echo "error: --account requires a non-empty value" >&2
+  exit 1
+}
+[ "$ACCOUNT_SET" -eq 0 ] || [ "$KIND" != secondmate ] || {
+  echo "error: --account applies only to crewmate and scout spawns; a secondmate launches on config/secondmate-harness" >&2
   exit 1
 }
 [ "$BACKEND_SET" -eq 0 ] || [ -n "$BACKEND_ARG" ] || {
@@ -1454,6 +1493,7 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
   [ -z "$HARNESS_ARG" ] || shared_args+=(--harness "$HARNESS_ARG")
   [ -z "$MODEL" ] || shared_args+=(--model "$MODEL")
   [ -z "$EFFORT" ] || shared_args+=(--effort "$EFFORT")
+  [ -z "$ACCOUNT_ARG" ] || shared_args+=(--account "$ACCOUNT_ARG")
   [ -z "$BACKEND_ARG" ] || shared_args+=(--backend "$BACKEND_ARG")
   # One delivery contract applies to every pair in a batch, exactly like the shared
   # harness. Each pair still re-validates it against its own brief, so a batch
@@ -2385,6 +2425,52 @@ if [ -n "$WORKER_ACCOUNT" ] && [ "$HARNESS" = claude ]; then
     unset CLAUDE_CONFIG_DIR
   fi
 fi
+# Named worker account (header above): resolved at the same point and for the
+# same reason as the pin. A relaunch on the recorded harness keeps the recorded
+# account, so replacing a worker never moves it onto the harness default; a
+# recorded value outside the account-name grammar is a pin root, not a table
+# account, and with no table at all a recorded account is ignored, so removing
+# config/accounts restores every launch.
+TABLE_ACCOUNT=
+TABLE_ACCOUNT_ENV=()
+TABLE_ACCOUNT_SETS_HOME=0
+if [ "$KIND" = secondmate ]; then
+  [ "$ACCOUNT_SET" -eq 0 ] || {
+    echo "error: --account applies only to crewmate and scout spawns; a secondmate launches on config/secondmate-harness" >&2
+    exit 1
+  }
+else
+  TABLE_ACCOUNT_WANT=$ACCOUNT_ARG
+  if [ "$ACCOUNT_SET" -eq 0 ] && [ "$RELAUNCH" -eq 1 ] && [ -z "$WORKER_ACCOUNT" ] &&
+    [ "$HARNESS" = "$RELAUNCH_PRIOR_HARNESS" ] && { [ -e "$CONFIG/accounts" ] || [ -L "$CONFIG/accounts" ]; }; then
+    TABLE_ACCOUNT_WANT=$(fm_meta_get "$RELAUNCH_META" account)
+    [[ "$TABLE_ACCOUNT_WANT" =~ $FM_ACCOUNTS_NAME_RE ]] && [ "$TABLE_ACCOUNT_WANT" != ordinary ] || TABLE_ACCOUNT_WANT=
+  fi
+  TABLE_ACCOUNT_SELECTED=$(fm_accounts_select "$CONFIG" "$HARNESS" "$TABLE_ACCOUNT_WANT") || exit 1
+  if [ -n "$TABLE_ACCOUNT_SELECTED" ]; then
+    TABLE_ACCOUNT=${TABLE_ACCOUNT_SELECTED%%$'\t'*}
+    read -r -a TABLE_ACCOUNT_ENV <<<"${TABLE_ACCOUNT_SELECTED#*$'\t'}"
+    if [ -n "$WORKER_ACCOUNT" ]; then
+      echo "error: config/$(fm_worker_account_file "$HARNESS") pins every $HARNESS launch from this home, and config/accounts selects account '$TABLE_ACCOUNT' for this spawn; remove one of them" >&2
+      exit 1
+    fi
+    for account_pair in "${TABLE_ACCOUNT_ENV[@]}"; do
+      [ "${account_pair%%=*}" != HOME ] || TABLE_ACCOUNT_SETS_HOME=1
+    done
+  fi
+fi
+# account_env_run <command...>: run a pre-launch helper that locates a store
+# from HOME or CLAUDE_CONFIG_DIR under the selected account's environment, so
+# it writes the store the worker will read.
+account_env_run() {
+  if [ -z "$TABLE_ACCOUNT" ]; then
+    "$@"
+  elif [ "$TABLE_ACCOUNT_SETS_HOME" = 1 ]; then
+    env -u CLAUDE_CONFIG_DIR "${TABLE_ACCOUNT_ENV[@]}" "$@"
+  else
+    env "${TABLE_ACCOUNT_ENV[@]}" "$@"
+  fi
+}
 
 secondmate_registry_value() {
   secondmate_registry_field "$DATA/secondmates.md" "$1" "$2"
@@ -4342,14 +4428,14 @@ claude*)
   else
     spawn_trust_args=("$WT" "$PROJ_ABS")
   fi
-  if ! "$FM_ROOT/bin/fm-claude-trust.sh" "${spawn_trust_args[@]}" >/dev/null; then
+  if ! account_env_run "$FM_ROOT/bin/fm-claude-trust.sh" "${spawn_trust_args[@]}" >/dev/null; then
     echo "error: could not pre-register Claude workspace trust for $WT; refusing to launch a claude worker that would wedge on the trust dialog; inspect window $T" >&2
     exit 1
   fi
   ;;
 agy)
   if [ "$KIND" != secondmate ]; then
-    if "$FM_ROOT/bin/fm-agy-trust.sh" "$WT" "$PROJ_ABS" >/dev/null; then
+    if account_env_run "$FM_ROOT/bin/fm-agy-trust.sh" "$WT" "$PROJ_ABS" >/dev/null; then
       AGY_TRUST_PREREGISTERED=1
     else
       echo "warning: could not pre-register agy workspace trust for $WT; the launch will answer the folder-trust dialog in window $T instead" >&2
@@ -4882,6 +4968,7 @@ preserve_relaunch_meta() {
   # task record stays byte-identical.
   [ -z "$WORKER_ACCOUNT" ] || echo "account=$WORKER_ACCOUNT_DECLARED"
   [ -z "$WORKER_ACCOUNT_PROVIDER" ] || echo "account_provider=$WORKER_ACCOUNT_PROVIDER"
+  [ -z "$TABLE_ACCOUNT" ] || echo "account=$TABLE_ACCOUNT"
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
   echo "spawn_gen=$SPAWN_GEN"
   # Default-off writes no traceparent= line.
@@ -5103,6 +5190,16 @@ esac
 # A home's worker account pin replaces that forwarding: the launch names the
 # pinned root (or unsets the variable for the ordinary Claude account) and
 # sheds the environment credentials Claude ranks above the root's login.
+# A named account prefixes its own environment. When it sets HOME for Claude,
+# that home is the store, so the forward becomes an explicit unset: a pane
+# daemon started under another CLAUDE_CONFIG_DIR would otherwise outrank it.
+if [ -n "$TABLE_ACCOUNT" ]; then
+  account_prefix='env'
+  for account_pair in "${TABLE_ACCOUNT_ENV[@]}"; do
+    account_prefix="$account_prefix ${account_pair%%=*}=$(shell_quote "${account_pair#*=}")"
+  done
+  LAUNCH="$account_prefix $LAUNCH"
+fi
 if [ -n "$WORKER_ACCOUNT" ]; then
   case "$HARNESS" in
   claude)
@@ -5116,6 +5213,8 @@ if [ -n "$WORKER_ACCOUNT" ]; then
     LAUNCH="PI_CODING_AGENT_DIR=$(shell_quote "$WORKER_ACCOUNT_ROOT") $LAUNCH"
     ;;
   esac
+elif [ "$HARNESS" = claude ] && [ "$TABLE_ACCOUNT_SETS_HOME" = 1 ]; then
+  LAUNCH="env -u CLAUDE_CONFIG_DIR $LAUNCH"
 elif [ "$HARNESS" = claude ] && [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
   LAUNCH="CLAUDE_CONFIG_DIR=$(shell_quote "$CLAUDE_CONFIG_DIR") $LAUNCH"
 fi
@@ -5474,6 +5573,7 @@ SPAWN_DELIVERY=
 SPAWN_ACCOUNT=
 [ -z "$WORKER_ACCOUNT" ] || SPAWN_ACCOUNT=" account=$WORKER_ACCOUNT_DECLARED"
 [ -z "$WORKER_ACCOUNT_PROVIDER" ] || SPAWN_ACCOUNT="$SPAWN_ACCOUNT account_provider=$WORKER_ACCOUNT_PROVIDER"
+[ -z "$TABLE_ACCOUNT" ] || SPAWN_ACCOUNT=" account=$TABLE_ACCOUNT"
 # Opt-in fleet activity ledger (docs/fleet-ledger.md); off costs one file test.
 [ ! -e "$CONFIG/fleet-ledger" ] || [ "$RELAUNCH" -eq 1 ] || FM_HOME=$FM_HOME FM_STATE_OVERRIDE=$STATE FM_CONFIG_OVERRIDE=$CONFIG "$SCRIPT_DIR/fm-fleet-ledger.sh" dispatched "$ID" "$KIND" "${PROJ_ABS##*/}" "$HARNESS" "$MODEL" || true
 echo "spawned $ID harness=$HARNESS kind=$KIND$SPAWN_DELIVERY window=$META_WINDOW worktree=$WT$SPAWN_ACCOUNT"
