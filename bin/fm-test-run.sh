@@ -1462,7 +1462,7 @@ families_for_changed_path() {
       printf '%s\n' session-bootstrap
       printf '%s\n' "__script__:fm-brief.test.sh"
       ;;
-    bin/fm-quota-axi-lib.sh)
+    bin/fm-quota-lib.sh)
       printf '%s\n' session-bootstrap
       printf '%s\n' "__script__:fm-procevent-quota.test.sh"
       printf '%s\n' "__script__:fm-quota-choose.test.sh"

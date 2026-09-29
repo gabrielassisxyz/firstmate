@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # Shared quota-axi compatibility floor for the bootstrap diagnostic, the
 # --json snapshot validator, and the provider-row join dispatch consumers use.
-# Usage: . bin/fm-quota-axi-lib.sh
+# Usage: . bin/fm-quota-lib.sh
 #
 # FM_QUOTA_AXI_MIN follows the axi-family floor policy owned beside the floor
 # constants in bin/fm-bootstrap.sh.

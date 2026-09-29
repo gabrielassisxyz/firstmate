@@ -172,8 +172,8 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
 # shellcheck source=bin/fm-backlog-transition-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-backlog-transition-lib.sh"
-# shellcheck source=bin/fm-quota-axi-lib.sh disable=SC1091
-. "$SCRIPT_DIR/fm-quota-axi-lib.sh"
+# shellcheck source=bin/fm-quota-lib.sh disable=SC1091
+. "$SCRIPT_DIR/fm-quota-lib.sh"
 # shellcheck source=bin/fm-control-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-control-lib.sh"
 # shellcheck source=bin/fm-env-lib.sh disable=SC1091

@@ -6,7 +6,7 @@
 #
 # Reads one already-captured quota-axi default TOON or JSON snapshot from the
 # provided file, or from stdin when --snapshot is omitted.
-# bin/fm-quota-axi-lib.sh owns schema compatibility and the shared row join.
+# bin/fm-quota-lib.sh owns schema compatibility and the shared row join.
 # For each --candidate in order, it maps <harness> to its primary provider
 # family, then applies the matched row's provider-wide scopes and exact model
 # or product scopes for <model>. A candidate is eligible only when no
@@ -26,7 +26,7 @@
 # candidate remains eligible under the captured quota evidence.
 #
 # Multi-provider limitation: this helper maps each harness to ONE primary
-# provider family (fm_quota_provider_for_harness in bin/fm-quota-axi-lib.sh)
+# provider family (fm_quota_provider_for_harness in bin/fm-quota-lib.sh)
 # and checks quota for that
 # family only. Some harnesses can run models from several providers - for
 # example, Pi and OpenCode may dispatch xAI, Anthropic, or other models - so a
@@ -51,8 +51,8 @@ set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# shellcheck source=bin/fm-quota-axi-lib.sh
-. "$SCRIPT_DIR/fm-quota-axi-lib.sh"
+# shellcheck source=bin/fm-quota-lib.sh
+. "$SCRIPT_DIR/fm-quota-lib.sh"
 # shellcheck source=bin/fm-control-lib.sh
 . "$SCRIPT_DIR/fm-control-lib.sh"
 
@@ -321,7 +321,7 @@ printf '%s\n' "$QUOTA_JSON" | fm_quota_json_valid || die "invalid quota-axi prov
 
 # provider_for_harness <harness> [<model>]
 # The harness -> primary provider family table is owned by
-# fm_quota_provider_for_harness in bin/fm-quota-axi-lib.sh; see the header
+# fm_quota_provider_for_harness in bin/fm-quota-lib.sh; see the header
 # limitation note for why one family per harness is all this helper checks.
 provider_for_harness() {
   fm_quota_provider_for_harness "$@"
@@ -330,7 +330,7 @@ provider_for_harness() {
 # effective_for_provider_model <provider> <model> <lane>
 # Print the most constraining applicable quota evidence for the provider/model
 # tuple, including provider-wide and exact model or product scopes. The row is
-# bound through quota_row from bin/fm-quota-axi-lib.sh, so <lane> matters only
+# bound through quota_row from bin/fm-quota-lib.sh, so <lane> matters only
 # on a schema 6 snapshot.
 effective_for_provider_model() {
   local provider=$1 model=${2:-default} lane=${3:-}

@@ -28,7 +28,7 @@
 # A provider named with --provider sets the tracked provider and the source id
 # becomes `quota-<provider>`.
 #
-# Snapshots may be quota-axi schema 5 or 6 (bin/fm-quota-axi-lib.sh owns the
+# Snapshots may be quota-axi schema 5 or 6 (bin/fm-quota-lib.sh owns the
 # validator). Both watches read every matching account row independently,
 # without combining quotas. A --provider watch restricts those rows to the
 # requested provider; details preserve each row's accountKey when present.
@@ -45,8 +45,8 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 # shellcheck source=bin/fm-procevent-lib.sh
 . "$SCRIPT_DIR/fm-procevent-lib.sh"
-# shellcheck source=bin/fm-quota-axi-lib.sh
-. "$SCRIPT_DIR/fm-quota-axi-lib.sh"
+# shellcheck source=bin/fm-quota-lib.sh
+. "$SCRIPT_DIR/fm-quota-lib.sh"
 # shellcheck source=bin/fm-timeout-lib.sh
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
 

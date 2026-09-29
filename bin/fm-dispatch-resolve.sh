@@ -26,7 +26,7 @@
 #   `approval` and `floor`, each profile's declared `provider` and `floor`, the
 #   quota rows from ONE quota-axi --json snapshot (schema 5 or 6; each
 #   candidate binds to one row through quota_row in
-#   bin/fm-quota-axi-lib.sh, so a Pi lane such as openai-codex-work/...
+#   bin/fm-quota-lib.sh, so a Pi lane such as openai-codex-work/...
 #   reads its own account's row and an expanded provider with no row for the
 #   candidate is unmeasured, never blocked), and the spendPriority argmax over
 #   the eligible candidates. The model never sees quota, catalogs, approvals,
@@ -79,8 +79,8 @@ FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-$FM_ROOT}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 
-# shellcheck source=bin/fm-quota-axi-lib.sh
-. "$SCRIPT_DIR/fm-quota-axi-lib.sh"
+# shellcheck source=bin/fm-quota-lib.sh
+. "$SCRIPT_DIR/fm-quota-lib.sh"
 # shellcheck source=bin/fm-control-lib.sh
 . "$SCRIPT_DIR/fm-control-lib.sh"
 # shellcheck source=bin/fm-env-lib.sh
@@ -215,7 +215,7 @@ if [ -n "$missing_provider" ]; then
   die "malformed rules file: $RULES_PATH - $location profiles whose harness lacks one authoritative provider family require provider: $harness"
 fi
 
-# ---- harness -> provider map, from the single owner in fm-quota-axi-lib.sh -----
+# ---- harness -> provider map, from the single owner in fm-quota-lib.sh -----
 PMAP='{}'
 while IFS= read -r h; do
   [ -n "$h" ] || continue
