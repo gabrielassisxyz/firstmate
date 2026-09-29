@@ -23,3 +23,5 @@ The rest of `AGENTS.md` is upstream's contract and stays as upstream wrote it. T
 | `bin/fm-tasks-axi.sh` | hands its arguments to the `br` adapter under `backlog-backend=br` | the routine backlog command must not write a tasks-axi row on a `br` home |
 | `bin/fm-session-start.sh` | the compact backlog listing runs through the selected runner and, under `br`, needs no `data/backlog.md` | the digest shows the `br` queue instead of reporting the backlog absent |
 | `docs/configuration.md` | a "Beads per project (`br`)" subsection under "Backlog backend" | documents the `br` value and `config/br-projects` |
+| `docs/configuration.md` | one sentence in "Beads per project (`br`)" pointing at the `fleet-beads` skill | says where task creation under `br` is documented |
+| `docs/documentation-audiences.json` | a surface entry for `.agents/skills/fleet-beads/SKILL.md` | every maintained prose surface must be classified |

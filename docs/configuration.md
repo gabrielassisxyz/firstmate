@@ -404,6 +404,7 @@ A bead's `in_progress` status is In flight, `closed` is Done, a deferred bead is
 Dispatch claims the bead as actor `firstmate`, completion closes it with the landed PR or local ref as its close reason, and captain holds defer and undefer it.
 The task body firstmate rewrites, such as a captain's recorded answer, is the bead's `notes` field; its description is left to the author.
 Beads are created and edited with `br` in their project; [`bin/fm-br-backlog.sh`](../bin/fm-br-backlog.sh) owns the verb mapping, and secondmate handoffs still require tasks-axi.
+The [`fleet-beads`](../.agents/skills/fleet-beads/SKILL.md) skill owns how a task is created under this backend: a bead written with `br create` in the project's checkout and checked before dispatch, never `tasks-axi add`.
 
 ### Using a separate operational home
 
