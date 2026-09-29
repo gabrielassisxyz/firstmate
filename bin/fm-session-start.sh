@@ -508,15 +508,28 @@ print_ready_queued_bounded() {
   '
 }
 
+# One listing through the configured backlog runner: tasks-axi pinned to this
+# home's backlog file, or the br adapter, which reads its trackers from config.
+backlog_listing() {  # <backlog-path> <verb> [args...]
+  local path=$1
+  shift
+  fm_backlog_runner
+  if [ "$FM_BACKLOG_RUNNER" = tasks-axi ]; then
+    tasks-axi "$@" --file "$path"
+  else
+    FM_BR_BACKLOG_CONFIG=$FM_BACKLOG_RUNNER_CONFIG "$FM_BACKLOG_RUNNER" "$@"
+  fi
+}
+
 print_backlog_tasks_axi_compact() {
   local path=$1 in_flight held blocked ready err
-  if ! in_flight=$(tasks-axi list --file "$path" --state in_flight --fields "$BACKLOG_FIELDS" 2>&1); then
+  if ! in_flight=$(backlog_listing "$path" list --state in_flight --fields "$BACKLOG_FIELDS" 2>&1); then
     err=$in_flight
-  elif ! held=$(tasks-axi list --file "$path" --state held --fields "$BACKLOG_FIELDS" 2>&1); then
+  elif ! held=$(backlog_listing "$path" list --state held --fields "$BACKLOG_FIELDS" 2>&1); then
     err=$held
-  elif ! blocked=$(tasks-axi list --file "$path" --state queued --blocked --fields "$BACKLOG_FIELDS" 2>&1); then
+  elif ! blocked=$(backlog_listing "$path" list --state queued --blocked --fields "$BACKLOG_FIELDS" 2>&1); then
     err=$blocked
-  elif ! ready=$(tasks-axi ready --file "$path" 2>&1); then
+  elif ! ready=$(backlog_listing "$path" ready 2>&1); then
     err=$ready
   else
     printf 'compact backlog listing (tasks-axi; done rows omitted; every in-flight, held, and blocked row shown in full; ready queued bounded to %s; task bodies omitted)\n' \
@@ -533,12 +546,21 @@ print_backlog_tasks_axi_compact() {
   fi
   printf 'tasks-axi compact listing failed; falling back to title-line rendering.\n'
   printf '%s\n' "$err"
+  [ -f "$path" ] || return 0
   print_backlog_manual_compact "$path" "fallback"
 }
 
 print_backlog_compact() {
-  local path=$1 label=$2
+  local path=$1 label=$2 reason
   subsection "$label"
+  if fm_backlog_backend_br "$CONFIG"; then
+    if reason=$(fm_tasks_axi_backend_available "$CONFIG" 2>&1); then
+      print_backlog_tasks_axi_compact "$path"
+    else
+      printf 'backlog unavailable: %s\n' "$reason"
+    fi
+    return 0
+  fi
   if [ -f "$path" ]; then
     if [ -s "$path" ]; then
       if fm_tasks_axi_backend_available "$CONFIG"; then

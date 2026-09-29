@@ -17,3 +17,9 @@ The rest of `AGENTS.md` is upstream's contract and stays as upstream wrote it. T
 | File | Change | Why |
 |---|---|---|
 | `AGENTS.md` | one line pointing at this file | so every worker reads the conventions above |
+| `bin/fm-tasks-axi-lib.sh` | `config/backlog-backend=br` resolves the backend to `br`, picks `bin/fm-br-backlog.sh` as the runner, and answers compatibility and availability from `br` | one `br` tracker per project is the only backlog, with no tasks-axi row to drift from it |
+| `bin/fm-backlog-transition-lib.sh` | `fm_tasks_axi` and the bounded `show` read run the selected runner instead of a literal `tasks-axi` | so every lifecycle read and mutation reaches the `br` adapter unchanged |
+| `bin/fm-captain-hold.sh` | its `tasks_axi` wrapper runs the selected runner, and the `--kind captain` help probe is skipped under `br` | captain holds become `br defer` / `br undefer` |
+| `bin/fm-tasks-axi.sh` | hands its arguments to the `br` adapter under `backlog-backend=br` | the routine backlog command must not write a tasks-axi row on a `br` home |
+| `bin/fm-session-start.sh` | the compact backlog listing runs through the selected runner and, under `br`, needs no `data/backlog.md` | the digest shows the `br` queue instead of reporting the backlog absent |
+| `docs/configuration.md` | a "Beads per project (`br`)" subsection under "Backlog backend" | documents the `br` value and `config/br-projects` |

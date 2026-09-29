@@ -346,12 +346,13 @@ tasks_axi() {
     file=$(fm_backlog_file "$data") || fail "$FM_BACKLOG_TRANSITION_ERROR"
     (cd "$root" && tasks-axi "$@" --file "$file")
   else
-    (cd "$root" && tasks-axi "$@")
+    (cd "$root" && fm_tasks_axi "$@")
   fi
 }
 
 require_tasks_axi() {
   fm_tasks_axi_compatible || fail "compatible tasks-axi is required"
+  ! fm_backlog_backend_br || return 0
   tasks-axi hold --help 2>&1 | grep -F -- '--kind captain' >/dev/null \
     || fail "tasks-axi does not expose the captain-hold contract"
 }

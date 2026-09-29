@@ -335,6 +335,7 @@ While the file exists, main's lease-checked commands also take the per-task leas
 
 The tracked `.tasks.toml` pins the default `tasks-axi` markdown backend to `data/backlog.md`, with `done_keep = 10` and an archive at `data/done-archive.md`.
 A home may instead select another tasks-axi adapter such as Beads through its own `.tasks.toml` or `TASKS_AXI_BACKEND`; firstmate still uses only tasks-axi verbs for routine backlog reads and mutations, and the adapter maps `start` and evidence-bearing `done` transitions to its native statuses and evidence fields.
+`config/backlog-backend=br` replaces tasks-axi entirely with one `br` tracker per project ([Beads per project](#beads-per-project-br)).
 
 ### Captain holds on Beads
 
@@ -391,6 +392,18 @@ A `manual` home owns its backlog file outright: the lifecycle transitions above 
 
 Absent or `tasks-axi` selects the tasks-axi path.
 On the default markdown adapter, tasks-axi and manual edits produce the same `## In flight`, `## Queued`, and `## Done` sections.
+
+### Beads per project (`br`)
+
+Set `config/backlog-backend` to `br` to keep no firstmate backlog at all: every backlog read and mutation goes to the `br` tracker of the project a task id belongs to, and tasks-axi is never run.
+The local, gitignored `config/br-projects` lists one tracker per line as `<prefix> <absolute path>`, for example `aub /path/to/agent-usage-book`; an id's prefix is everything before its last `-`, and an id whose prefix is not listed is reported as absent.
+The backend is available when `br --version` succeeds and that file lists at least one tracker; otherwise lifecycle work refuses and the session-start digest names the missing piece.
+
+A bead's `in_progress` status is In flight, `closed` is Done, a deferred bead is held for the captain, and the Queued list is what `ready-landed --repo <path> --json` prints for each tracker, so a bead whose blocker merely closed without landing is not dispatchable.
+`ready-landed` must be on `PATH` (or named by `FM_READY_LANDED`); reads that need it refuse rather than fall back to `br ready`.
+Dispatch claims the bead as actor `firstmate`, completion closes it with the landed PR or local ref as its close reason, and captain holds defer and undefer it.
+The task body firstmate rewrites, such as a captain's recorded answer, is the bead's `notes` field; its description is left to the author.
+Beads are created and edited with `br` in their project; [`bin/fm-br-backlog.sh`](../bin/fm-br-backlog.sh) owns the verb mapping, and secondmate handoffs still require tasks-axi.
 
 ### Using a separate operational home
 
