@@ -1620,6 +1620,19 @@ backlog_done_args() {
   esac
 }
 
+# Under the br backend the item lives in a project's tracker, and the adapter
+# alone resolves which one, so the line names that tracker rather than this home.
+br_backlog_display() {
+  local tracker
+  fm_backlog_runner
+  if tracker=$(FM_BR_BACKLOG_CONFIG=$FM_BACKLOG_RUNNER_CONFIG "$FM_BR_BACKLOG_ADAPTER" where "$ID" 2>/dev/null) \
+    && [ -n "$tracker" ]; then
+    printf 'the br tracker at %s\n' "$tracker"
+  else
+    printf 'the br backlog (no tracker listed for %s in config/br-projects)\n' "$ID"
+  fi
+}
+
 # Closing the backlog item is this script's own last act on the record, not a
 # printed instruction for a later turn (bin/fm-backlog-transition-lib.sh owns the
 # invariant). This prints what already happened, so the follow-up wording stays
@@ -1631,7 +1644,9 @@ backlog_refresh_reminder() {
   if root=$(fm_backlog_root "$DATA"); then
     backend=$(fm_tasks_axi_backend "$root") || return 2
   fi
-  if [ "$backend" != markdown ]; then
+  if [ "$backend" = br ]; then
+    backlog_display=$(br_backlog_display)
+  elif [ "$backend" != markdown ]; then
     backlog_display="this home's configured tasks-axi backend (data directory $DATA)"
   elif backlog_display=$(fm_backlog_file "$DATA"); then
     :
