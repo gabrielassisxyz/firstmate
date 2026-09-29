@@ -113,6 +113,7 @@ init_changed_fixture_repo() {
     fm-pr-merge.test.sh \
     fm-procevent-quota.test.sh \
     fm-quota-choose.test.sh \
+    fm-quota-lib.test.sh \
     fm-pi-watch-extension.test.sh \
     fm-pi-windows-shell-invocation.test.sh \
     fm-afk-return.test.sh \
@@ -130,7 +131,7 @@ init_changed_fixture_repo() {
   : >"$repo/bin/fm-control-lib.sh"
   : >"$repo/bin/fm-timeout-lib.sh"
   : >"$repo/bin/fm-procevent-quota.sh"
-  : >"$repo/bin/fm-quota-axi-lib.sh"
+  : >"$repo/bin/fm-quota-lib.sh"
   : >"$repo/bin/fm-quota-choose.sh"
   : >"$repo/bin/unmapped-source.sh"
   # A shared top-level test fixture read by two suites in different families,
@@ -385,13 +386,15 @@ test_changed_dependency_selection_and_unmapped_failure() {
   git -C "$repo" add bin/fm-procevent-quota.sh bin/fm-quota-choose.sh
   git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm quota-source-change
 
-  printf '\n' >>"$repo/bin/fm-quota-axi-lib.sh"
+  printf '\n' >>"$repo/bin/fm-quota-lib.sh"
   listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
   assert_contains "$listed" "tests/fm-procevent-quota.test.sh" \
     "shared quota validator selects process-event coverage"
   assert_contains "$listed" "tests/fm-quota-choose.test.sh" \
     "shared quota validator selects chooser coverage"
-  git -C "$repo" add bin/fm-quota-axi-lib.sh
+  assert_contains "$listed" "tests/fm-quota-lib.test.sh" \
+    "shared quota validator selects its own coverage"
+  git -C "$repo" add bin/fm-quota-lib.sh
   git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm quota-validator-change
 
   printf '\n' >>"$repo/bin/fm-control-lib.sh"

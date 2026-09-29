@@ -4,7 +4,7 @@
 #
 # This script collects a FACT and renders no verdict. It takes no harness, model,
 # or provider, reads no quota, and never decides whether a dispatch candidate is
-# eligible. The dispatching first mate owns that judgment from `quota-axi`'s data
+# eligible. The dispatching first mate owns that judgment from `aub status`'s data
 # plus each harness's authoritative model catalog; the decision procedure is
 # owned once by .agents/skills/quota-array-dispatch/SKILL.md.
 #
