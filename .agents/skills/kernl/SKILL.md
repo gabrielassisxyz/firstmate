@@ -70,6 +70,12 @@ The rule prevents losing a landed write, including the frontmatter id the server
 
 When no offered title fits, write without links and pass `--no-links-reason <text>` rather than inventing one.
 
+## kernl and ai-memory
+
+The vault note is the durable record of what was decided; ai-memory is the recall of what sessions actually did.
+The captain's session opens in this fork, not in the project the captain is thinking about, and ai-memory scopes every tool to the project resolved from the working directory unless one is named.
+A memory query from the captain therefore passes its `project` (for example `llm-workflow` or `kernl`) whenever the question is about work outside firstmate itself.
+
 ## Note conventions
 
 - A note body is markdown with YAML frontmatter.

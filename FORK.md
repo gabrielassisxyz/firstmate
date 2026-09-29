@@ -56,10 +56,6 @@ The rest of `AGENTS.md` is upstream's contract and stays as upstream wrote it. T
 
 - **`.mcp.json`** registers one MCP server, `ai-memory`, the operator's long-term memory service at `http://127.0.0.1:49374/mcp`, for a Claude session opened at the repository root. Upstream ships no `.mcp.json`, so the file has no merge surface. Spawned Claude workers list the server as disabled in their launch settings (see the `bin/fm-spawn.sh` row above), so only the captain's session gets it from this file.
 
-## Memory queries from the captain
-
-The captain's working directory is this fork, not the project the captain is thinking about, and ai-memory scopes every tool to the project resolved from the working directory unless one is named. A memory query from the captain therefore passes its `project` (for example `llm-workflow` or `kernl`) whenever the question is about work outside firstmate itself. The vault note is the durable record of what was decided; ai-memory is the recall of what sessions actually did.
-
 ## Repository settings that differ from upstream
 
 - **The "Require no-mistakes" workflow is disabled** (`.github/workflows/no-mistakes-required.yml`), as a GitHub repository setting rather than a file edit. That workflow fails every pull request not raised through the no-mistakes pipeline, exempting only the upstream author, while this fork ships its own changes as direct pull requests. The file stays unchanged so upstream merges stay clean.
