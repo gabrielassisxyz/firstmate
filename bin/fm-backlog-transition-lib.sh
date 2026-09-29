@@ -36,7 +36,8 @@
 # the data directory is the addressing root rather than FM_HOME, so a home whose
 # data directory is relocated keeps its backlog and its archive together. A root
 # with no `.tasks.toml` gets tasks-axi's built-in defaults.
-# bin/fm-tasks-axi-lib.sh owns backend precedence and configuration failures.
+# bin/fm-tasks-axi-lib.sh owns backend precedence and configuration failures,
+# and fm_backlog_runner there swaps tasks-axi for bin/fm-br-backlog.sh.
 #
 # CRASH RECOVERY. Only teardown needs a durable record: it removes the meta and
 # with it the completion links, so a process killed between the two halves would
@@ -332,12 +333,25 @@ fm_tasks_axi_timeout_expired() {  # <status>
   fm_timed_out "$1"
 }
 
+# A caller that sources this library without bin/fm-tasks-axi-lib.sh has
+# selected no backend, so it keeps running tasks-axi; sourcing that library
+# afterwards replaces this with the real selection.
+if ! declare -F fm_backlog_runner >/dev/null; then
+  # shellcheck disable=SC2034 # Output globals, read by the callers below.
+  fm_backlog_runner() {
+    FM_BACKLOG_RUNNER=tasks-axi
+    FM_BACKLOG_RUNNER_CONFIG=
+  }
+fi
+
 fm_tasks_axi() {
   local bound=${FM_TASKS_AXI_TIMEOUT:-}
+  fm_backlog_runner
   if [ -z "$bound" ]; then
-    exec tasks-axi "$@"
+    FM_BR_BACKLOG_CONFIG=$FM_BACKLOG_RUNNER_CONFIG exec "$FM_BACKLOG_RUNNER" "$@"
   fi
-  fm_exec_timed "$bound" "$bound" tasks-axi "$@"
+  FM_BR_BACKLOG_CONFIG=$FM_BACKLOG_RUNNER_CONFIG \
+    fm_exec_timed "$bound" "$bound" "$FM_BACKLOG_RUNNER" "$@"
 }
 
 # Print one row's `tasks-axi show` output (plus stderr) from the addressing
@@ -384,9 +398,11 @@ fm_backlog_row_show() {  # <resolved-data-dir> <id> [flag...]
   if [ -n "$FM_BACKLOG_AXI_FILE" ]; then
     set -- "$@" --file "$FM_BACKLOG_AXI_FILE"
   fi
+  fm_backlog_runner
   # shellcheck disable=SC2016  # Expansion is deliberately deferred to the child shell.
-  out=$(fm_run_timed "$secs" bash -c 'cd "$1" 2>/dev/null || exit 1; shift; exec tasks-axi show "$@"' \
-    _ "$FM_BACKLOG_AXI_ROOT" "$id" "$@" 2>&1)
+  out=$(FM_BR_BACKLOG_CONFIG=$FM_BACKLOG_RUNNER_CONFIG fm_run_timed "$secs" \
+    bash -c 'cd "$1" 2>/dev/null || exit 1; program=$2; shift 2; exec "$program" show "$@"' \
+    _ "$FM_BACKLOG_AXI_ROOT" "$FM_BACKLOG_RUNNER" "$id" "$@" 2>&1)
   status=$?
   # A backend that wrote a header or a progress line before wedging leaves that
   # fragment as the first output line, and every caller reads the first line as

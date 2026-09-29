@@ -13,6 +13,8 @@
 # stripped or forked builds that advertise a current version without those flags.
 # `config/backlog-backend=manual` opts out of tasks-axi for routine firstmate
 # backlog mutations, but validated secondmate handoffs always use `tasks-axi mv`.
+# `config/backlog-backend=br` replaces tasks-axi with bin/fm-br-backlog.sh: the
+# backend resolves to `br`, and compatibility means that adapter can run.
 # Absent or any other value keeps the default tasks-axi backend path, falling
 # back to manual mutation when the tool is not compatible.
 # fm_tasks_axi_backend_resolve owns backend precedence: TASKS_AXI_BACKEND when
@@ -61,6 +63,10 @@ fm_tasks_axi_version_parts() {
 }
 
 fm_tasks_axi_compatible() {
+  if fm_backlog_backend_br; then
+    fm_br_backlog_available 2>/dev/null
+    return $?
+  fi
   case "$FM_TASKS_AXI_COMPATIBLE_MEMO" in
     1) return 0 ;;
     0) return 1 ;;
@@ -141,8 +147,14 @@ fm_tasks_axi_backend_from_toml() {  # <toml-path>
 }
 
 # Resolve the active tasks-axi backend with the same precedence as tasks-axi.
+# `config/backlog-backend=br` outranks all of it and resolves to `br`, so every
+# backend-specific branch treats the home as a non-markdown adapter.
 fm_tasks_axi_backend_resolve() {  # <tasks-axi-working-directory>
   local root=$1 backend
+  if fm_backlog_backend_br; then
+    printf '%s\n' br
+    return 0
+  fi
   if [ "${TASKS_AXI_BACKEND+x}" = x ]; then
     printf '%s\n' "$TASKS_AXI_BACKEND"
     return 0
@@ -193,8 +205,63 @@ fm_backlog_backend_manual() {
   [ "$(fm_backlog_backend_value "$config_dir")" = manual ]
 }
 
+# The config directory of the home these libraries address, resolved the way
+# every lifecycle script resolves its CONFIG, for callers that hold none.
+fm_backlog_config_dir() {
+  if [ -n "${FM_CONFIG_OVERRIDE:-}" ]; then
+    printf '%s\n' "$FM_CONFIG_OVERRIDE"
+  elif [ -n "${FM_HOME:-}" ]; then
+    printf '%s/config\n' "$FM_HOME"
+  else
+    return 1
+  fi
+}
+
+# `config/backlog-backend=br` hands every backlog read and mutation to
+# bin/fm-br-backlog.sh, which owns that backend's contract.
+FM_BR_BACKLOG_ADAPTER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-br-backlog.sh"
+
+fm_backlog_backend_br() {  # [config-dir]
+  local config_dir=${1:-}
+  [ -n "$config_dir" ] || config_dir=$(fm_backlog_config_dir) || return 1
+  [ "$(fm_backlog_backend_value "$config_dir")" = br ]
+}
+
+# Select the program every backlog read and mutation runs: tasks-axi, or the
+# adapter with this home's config directory, which callers pass to it as
+# FM_BR_BACKLOG_CONFIG.
+# shellcheck disable=SC2034 # Output globals, read by the sourcing caller.
+fm_backlog_runner() {
+  local config
+  FM_BACKLOG_RUNNER=tasks-axi
+  FM_BACKLOG_RUNNER_CONFIG=
+  if config=$(fm_backlog_config_dir) && fm_backlog_backend_br "$config"; then
+    FM_BACKLOG_RUNNER=$FM_BR_BACKLOG_ADAPTER
+    FM_BACKLOG_RUNNER_CONFIG=$config
+  fi
+}
+
+# br is usable when it runs and config/br-projects lists at least one tracker.
+fm_br_backlog_available() {  # [config-dir]
+  local config_dir=${1:-} projects
+  [ -n "$config_dir" ] || config_dir=$(fm_backlog_config_dir) || return 1
+  projects="$config_dir/br-projects"
+  br --version >/dev/null 2>&1 || {
+    printf 'backlog backend br: br is not on PATH\n' >&2
+    return 1
+  }
+  grep -Eq '^[[:space:]]*[^#[:space:]]' "$projects" 2>/dev/null || {
+    printf 'backlog backend br: %s lists no tracker\n' "$projects" >&2
+    return 1
+  }
+}
+
 fm_tasks_axi_backend_available() {
   local config_dir=$1
   fm_backlog_backend_manual "$config_dir" && return 1
+  if fm_backlog_backend_br "$config_dir"; then
+    fm_br_backlog_available "$config_dir"
+    return $?
+  fi
   fm_tasks_axi_compatible
 }

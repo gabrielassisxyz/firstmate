@@ -47,6 +47,9 @@
 #     first write would replace the link with a private copy, exactly the fork
 #     this command exists to prevent. Lifecycle transitions refuse the same file.
 # Otherwise the exit status is tasks-axi's own.
+# Under `config/backlog-backend=br` the arguments go to bin/fm-br-backlog.sh
+# instead, after the --file and --start refusals; that adapter owns the verbs,
+# and tasks-axi need not be installed.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -119,6 +122,11 @@ for arg in "$@"; do
       ;;
   esac
 done
+
+fm_backlog_runner
+if [ "$FM_BACKLOG_RUNNER" != tasks-axi ]; then
+  FM_BR_BACKLOG_CONFIG=$FM_BACKLOG_RUNNER_CONFIG exec "$FM_BACKLOG_RUNNER" ${ARGS[@]+"${ARGS[@]}"}
+fi
 
 command -v tasks-axi >/dev/null 2>&1 || fail "tasks-axi is not on PATH; run bin/fm-bootstrap.sh for the install command"
 
