@@ -182,9 +182,13 @@ else
   # remove a directory a live clone is still writing. Verify the sentinel
   # after mv: if the destination appeared meanwhile, mv may nest our stage
   # inside it instead of publishing, so rollback must remove only that stage.
+  # --no-local: a local clone copies the code root's object files one by one,
+  # so a repack there (such as the auto maintenance a commit or pull detaches)
+  # deleting a loose object mid-copy fails the clone. Git's transport reads
+  # objects through lookups that follow a concurrent repack.
   STAGE_HOME=$(mktemp -d "$HOME_PARENT/.fm-home-provisioning.XXXXXX") \
     || die "cannot create remote home staging directory"
-  git clone --quiet -- "$FM_ROOT" "$STAGE_HOME" || die "could not clone the remote Firstmate home"
+  git clone --quiet --no-local -- "$FM_ROOT" "$STAGE_HOME" || die "could not clone the remote Firstmate home"
   STAGE_SENTINEL="${STAGE_HOME##*/}.owner"
   : > "$STAGE_HOME/$STAGE_SENTINEL" || die "cannot mark the remote home staging directory"
   mv -- "$STAGE_HOME" "$FM_HOME" || die "cannot install the remote home"

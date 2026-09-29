@@ -34,6 +34,8 @@ The rest of `AGENTS.md` is upstream's contract and stays as upstream wrote it. T
 | `.agents/skills/bootstrap-diagnostics/SKILL.md`, `.agents/skills/agent-skill-trigger-index/SKILL.md` | the `ACCOUNTS: invalid` diagnostic line | the new bootstrap line has a handling rule and a trigger |
 | `docs/documentation-audiences.json` | a surface entry for `FORK.md` | the documentation audience check refuses an unclassified surface |
 | `tests/fm-bootstrap.test.sh`, `tests/fm-control-relaunch.test.sh` | one case each: the `ACCOUNTS` diagnostic, and a relaunch keeping its recorded account | covers the bootstrap and relaunch halves of named accounts |
+| `bin/fm-remote-home-provision.sh` | the code-root clone passes `--no-local` | a local clone copies the code root's object files one by one, so the auto maintenance a commit detaches there failed it whenever a repack deleted a loose object mid-copy |
+| `tests/fm-remote-secondmate-lifecycle-e2e.test.sh` | one case: provisioning succeeds against a code root whose object store a file-by-file copy cannot read | the regression for the `--no-local` clone |
 | `.github/workflows/ci.yml` | both Pi installs pin `@earendil-works/pi-coding-agent@0.87.1` | Pi 0.99 changed its stock tool rendering and the Pi extension tests fail against it; an unpinned install turned every pull request red on the day it was published |
 
 ## Repository settings that differ from upstream
