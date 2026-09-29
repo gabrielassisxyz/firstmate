@@ -11,6 +11,7 @@
 #                 "BACKEND_INVALID: <name> (known: <names>)",
 #                 "STARTUP_MEMORY_BUDGET: invalid config/startup-memory-budget - <reason>",
 #                 "CREW_DISPATCH: invalid config/crew-dispatch.json - <reason>",
+#                 "ACCOUNTS: invalid config/accounts [line <n>] - <reason>",
 #                 "FLEET_SYNC: <repo>: skipped|recovered|STUCK: <detail>",
 #                 "HOME_SUMMARY: <ledger never published|not republished since
 #                 <stamp>>; <n> failed attempt(s) ... last: <recorded failure>",
@@ -187,6 +188,8 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-config-inherit-lib.sh"
 # shellcheck source=bin/fm-secondmate-nudge-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-secondmate-nudge-lib.sh"
+# shellcheck source=bin/fm-accounts-lib.sh disable=SC1091
+. "$SCRIPT_DIR/fm-accounts-lib.sh"
 # shellcheck source=bin/fm-startup-memory-budget-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-startup-memory-budget-lib.sh"
 # shellcheck source=bin/fm-x-lib.sh disable=SC1091
@@ -1440,6 +1443,7 @@ detect_local_config() {
     echo "MISSING_MANUAL: cursor-agent (instructions: $(manual_install_url cursor-agent))"
   fi
   crew_dispatch_validate
+  fm_accounts_diagnostics "$CONFIG"
   if [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ] \
     && ! fm_backlog_backend_manual "$CONFIG" && fm_tasks_axi_compatible; then
     echo "BOOTSTRAP_INFO: tasks-axi available"

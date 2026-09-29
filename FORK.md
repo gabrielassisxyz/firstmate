@@ -25,3 +25,15 @@ The rest of `AGENTS.md` is upstream's contract and stays as upstream wrote it. T
 | `docs/configuration.md` | a "Beads per project (`br`)" subsection under "Backlog backend" | documents the `br` value and `config/br-projects` |
 | `docs/configuration.md` | one sentence in "Beads per project (`br`)" pointing at the `fleet-beads` skill | says where task creation under `br` is documented |
 | `docs/documentation-audiences.json` | a surface entry for `.agents/skills/fleet-beads/SKILL.md` | every maintained prose surface must be classified |
+| `bin/fm-spawn.sh` | `--account <name>` in the parser and batch forwarding; account selection beside the worker account pin; the account's `env KEY='VALUE'` prefix at the `CLAUDE_CONFIG_DIR` forward, which it replaces with an unset when the account sets `HOME` for Claude; the Claude and agy trust registrations run under the account; `account=<name>` in the task record and spawned line; a relaunch keeps the recorded account | a crewmate or scout can run on one of several accounts for its harness, picked per spawn from the local `config/accounts` (owned by the new `bin/fm-accounts-lib.sh`) |
+| `bin/fm-bootstrap.sh` | sources `bin/fm-accounts-lib.sh` and prints `ACCOUNTS: invalid config/accounts line <n> - <reason>` for each malformed line | a broken account line is reported at session start, not first at spawn |
+| `bin/fm-test-run.sh` | `fm-spawn-account.test.sh` joins the `backend-dispatch` family beside `fm-worker-account.test.sh` | the new suite runs with the spawn tests it belongs to |
+| `docs/configuration.md` | a "Named worker accounts (config/accounts)" section, its row in "Find a setting", and `account` in the crew-dispatch `use[]` schema | documents the table, the harness match, `default`, and the `HOME` versus `CLAUDE_CONFIG_DIR` rule |
+| `.agents/skills/quota-array-dispatch/SKILL.md` | a chosen profile's `account` reaches `fm-spawn.sh` as `--account`, and it is part of a profile's identity | the dispatch skill passes the account through |
+| `.agents/skills/bootstrap-diagnostics/SKILL.md`, `.agents/skills/agent-skill-trigger-index/SKILL.md` | the `ACCOUNTS: invalid` diagnostic line | the new bootstrap line has a handling rule and a trigger |
+| `docs/documentation-audiences.json` | a surface entry for `FORK.md` | the documentation audience check refuses an unclassified surface |
+| `tests/fm-bootstrap.test.sh`, `tests/fm-control-relaunch.test.sh` | one case each: the `ACCOUNTS` diagnostic, and a relaunch keeping its recorded account | covers the bootstrap and relaunch halves of named accounts |
+
+## Repository settings that differ from upstream
+
+- **The "Require no-mistakes" workflow is disabled** (`.github/workflows/no-mistakes-required.yml`), as a GitHub repository setting rather than a file edit. That workflow fails every pull request not raised through the no-mistakes pipeline, exempting only the upstream author, while this fork ships its own changes as direct pull requests. The file stays unchanged so upstream merges stay clean.

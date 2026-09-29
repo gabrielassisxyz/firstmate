@@ -814,6 +814,30 @@ test_worker_account_pin_follows_the_relaunch() {
   pass "fm-control relaunch: the replacement follows the home's current worker account pin"
 }
 
+test_named_account_follows_the_relaunch() {
+  local dir out rc id=rl-named
+  dir=$(new_case named "$id")
+  add_ship_task "$dir" "$id" claude
+  echo "account=claude-b" >> "$dir/home/state/$id.meta"
+  mkdir -p "$dir/home/config" "$dir/profile-a" "$dir/profile-b"
+  cat > "$dir/home/config/accounts" <<EOF
+claude-a claude default HOME=$dir/profile-a
+claude-b claude HOME=$dir/profile-b
+EOF
+  out=$(run_control "$dir" "$id" relaunch --note "named account"); rc=$?
+  expect_code 0 "$rc" "a relaunch of a task on a named account should succeed"$'\n'"$out"
+  [ "$(meta_field "$dir" "$id" account)" = claude-b ] || fail "the relaunched record should keep the recorded account"
+  assert_contains "$(cat "$dir/fake/literal")" "env HOME='$dir/profile-b' " \
+    "the replacement should launch under the recorded account, not the harness default"
+  rm "$dir/home/config/accounts"
+  : > "$dir/fake/literal"
+  out=$(run_control "$dir" "$id" relaunch --note "table removed"); rc=$?
+  expect_code 0 "$rc" "a relaunch after the accounts table is removed should succeed"$'\n'"$out"
+  assert_no_grep "account=" "$dir/home/state/$id.meta" "a relaunch without a table must drop the recorded account"
+  assert_not_contains "$(cat "$dir/fake/literal")" "env HOME=" "a relaunch without a table must launch exactly as before"
+  pass "fm-control relaunch: the replacement keeps the task's recorded named account until the table is removed"
+}
+
 test_explicit_model_wins_over_the_recorded_one() {
   local dir out rc
   dir=$(new_case explicit rl7)
@@ -2403,6 +2427,7 @@ test_same_harness_relaunch_keeps_the_profile_axes
 test_native_ultra_relaunch_preserves_profile_and_rejects_before_stop
 test_signed_out_worker_account_pin_refuses_before_stop
 test_worker_account_pin_follows_the_relaunch
+test_named_account_follows_the_relaunch
 test_explicit_model_wins_over_the_recorded_one
 test_relaunch_onto_an_unverified_harness_is_refused
 test_prior_harness_turnend_registry_entry_is_cleared

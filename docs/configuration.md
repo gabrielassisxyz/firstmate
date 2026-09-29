@@ -9,7 +9,7 @@ Start with the directory layout, then use the setting reference for the behavior
 | --- | --- |
 | Firstmate's code, private files, or project location | [FM_HOME](#fm_home) and [operational home layout](#operational-home-layout-and-state) |
 | Task windows and worker tools | [Runtime backend](#runtime-backend-configbackend--fm_backend) and [harness support](#harness-support) |
-| Worker permissions, accounts, or environment | [Claude permission mode](#claude-permission-mode-configclaude-permission-mode), [worker account pin](#worker-account-pin-configclaude-account-configpi-account), and [worker launch environment](#worker-launch-environment-configlaunch-env-allowlist) |
+| Worker permissions, accounts, or environment | [Claude permission mode](#claude-permission-mode-configclaude-permission-mode), [worker account pin](#worker-account-pin-configclaude-account-configpi-account), [named worker accounts](#named-worker-accounts-configaccounts), and [worker launch environment](#worker-launch-environment-configlaunch-env-allowlist) |
 | Backlog, preferences, and memory | [Backlog backend](#backlog-backend-taskstoml--configbacklog-backend), [captain preferences](#captain-preferences-datacaptainmd--datacaptain-sharedmd), and [startup memory budget](#startup-memory-budget-configstartup-memory-budget) |
 | Supervision and presentation | [Pi supervision branch](#pi-supervision-branch), [supervision host](#supervision-host-configsupervision-host), and [Calm preference](#calm-preference-configcalm) |
 | Persistent secondmates | [Secondmate routes](#secondmate-routes-datasecondmatesmd) |
@@ -890,6 +890,49 @@ A remote secondmate is launched on its host from its own home's configuration, s
 
 [`bin/fm-worker-account-lib.sh`](../bin/fm-worker-account-lib.sh) owns parsing, the sign-in check, and the full list of credentials a Claude launch unsets; [runtime backend verification](verification/runtime-backends.md#worker-account-pin-sign-in-check) records the check against the real runners.
 
+## Named worker accounts (config/accounts)
+
+A fleet that holds several accounts for one runner, such as two Claude subscriptions, can launch each crewmate or scout on a chosen account with `fm-spawn.sh --account <name>`.
+The optional local, gitignored `config/accounts` names each account and the environment that selects its credential store; with no file, every launch is unchanged.
+
+### Table format
+
+One account per line; blank lines and lines starting with `#` are ignored.
+
+```text
+# <name> <harness> [default] KEY=VALUE [KEY=VALUE ...]
+claude-a   claude  default HOME=/path/to/profile-a
+claude-b   claude          HOME=/path/to/profile-b
+codex-a    codex   default HOME=/path/to/codex-a CODEX_HOME=/path/to/codex-a/.codex
+agy        agy     default HOME=/path/to/real-home
+```
+
+A name matches `[A-Za-z0-9][A-Za-z0-9._-]*` and is not `ordinary`, which the worker account pin records for its own default.
+A key matches `[A-Z_][A-Z0-9_]*`, and tokens are separated by spaces or tabs, so a value cannot contain either.
+A name may appear once, and at most one line per harness may carry `default`.
+
+### Selection and launch
+
+`--account <name>` selects that line, whose harness must equal the spawn's harness.
+With no `--account`, the harness's `default` line applies, so a runner whose credentials live in one home can be covered without naming an account on every spawn; with no default line, nothing is added and the launch is unchanged.
+The selected pairs prefix the worker's launch command as `env KEY='VALUE' ...`, because worker panes start from a long-lived terminal daemon that does not carry firstmate's environment.
+The Claude and agy workspace-trust registrations run under the same pairs, so they write the store the worker reads.
+
+When an account sets `HOME` for a Claude worker, that home is the credential store: the launch no longer forwards firstmate's own `CLAUDE_CONFIG_DIR` and unsets it instead, so a value in the pane's ambient environment cannot outrank the account.
+An account that does not set `HOME` leaves that forwarding as it was.
+
+A relaunch on the recorded harness keeps the task's recorded account unless `--account` names another, and refuses if that account has left the table; a relaunch onto another harness takes that harness's default.
+
+### Refusals and reporting
+
+An unknown account, an account for another harness, a malformed line, or an account and a [worker account pin](#worker-account-pin-configclaude-account-configpi-account) for the same runner refuse the spawn before any endpoint, local copy, or task record exists.
+A malformed line refuses only the spawns that name it or rely on it as their harness default; every other account keeps working, and bootstrap reports the line as `ACCOUNTS: invalid config/accounts line <n> - <reason>`.
+Secondmate spawns resolve through `config/secondmate-harness` and never take an account, so `--account` on one refuses.
+
+The spawn prints the account as `account=<name>` and records the same field in the task record.
+Removing `config/accounts` returns every later spawn and relaunch to its previous behavior.
+[`bin/fm-accounts-lib.sh`](../bin/fm-accounts-lib.sh) owns the table format and selection.
+
 ## Lavish server address (config/lavish-axi-host)
 
 The optional local, gitignored `config/lavish-axi-host` contains one non-empty address without whitespace for the per-machine Lavish server.
@@ -999,7 +1042,7 @@ Per-machine Cursor `cli-config.json` attribution-off is not this contract: it do
 
 `config/crew-dispatch.json` is an optional local, gitignored file containing natural-language rules that firstmate reads before dispatching a crewmate or scout.
 Firstmate chooses the best matching rule with judgment; shell scripts do not match the natural-language rules.
-Firstmate resolves the rule's profile object or array under `AGENTS.md` section 4 and `quota-array-dispatch`, then passes only concrete `--harness`, `--model`, and `--effort` flags to `fm-spawn.sh`.
+Firstmate resolves the rule's profile object or array under `AGENTS.md` section 4 and `quota-array-dispatch`, then passes only concrete `--harness`, `--model`, `--effort`, and `--account` flags to `fm-spawn.sh`.
 
 **Spawn requirements**
 
@@ -1021,7 +1064,7 @@ This section is the single owner of the canonical schema and its per-field seman
       "min_confidence": 0.85,
       "floor": { "scope": "<quota-axi scope>", "min_percent": 20, "provider": "<quota-axi provider>" },
       "use": [
-        { "harness": "<adapter>", "model": "<optional model>", "effort": "<low|medium|high|xhigh|max|ultra, optional>", "provider": "<optional quota-axi provider>", "floor": { "scope": "<quota-axi scope>", "min_percent": 50 } }
+        { "harness": "<adapter>", "model": "<optional model>", "effort": "<low|medium|high|xhigh|max|ultra, optional>", "provider": "<optional quota-axi provider>", "account": "<optional config/accounts name>", "floor": { "scope": "<quota-axi scope>", "min_percent": 50 } }
       ],
       "why": "<optional rationale that helps firstmate choose>"
     }
@@ -1041,6 +1084,7 @@ This section is the single owner of the canonical schema and its per-field seman
 | `use` and optional top-level `default` | Accept one profile object or a non-empty array of profile objects; the single-object form remains fully backward-compatible. |
 | Profile `harness` | Required in every profile. |
 | Profile `model` and `effort`; rule `why` | Optional. |
+| Profile `account` | Optional; names a [`config/accounts`](#named-worker-accounts-configaccounts) line for the profile's harness, and firstmate passes it to `fm-spawn.sh` as `--account`. |
 
 **Fields applied only by typed resolution**
 
