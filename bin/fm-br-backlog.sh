@@ -94,18 +94,22 @@ not_found() {  # <id> [stderr-line]
   exit 1
 }
 
-# Sets PROJECT_PATH for <id>, or exits NOT_FOUND naming the prefix and table.
+# Sets PROJECT_PATH for <id> from the longest listed prefix that <id> starts
+# with followed by `-`, so an id with a slug before its hash still resolves and
+# `arch` never claims an `archive-` id. Exits NOT_FOUND naming the id and table.
 resolve_project() {  # <id>
-  local id=$1 prefix rows
+  local id=$1 prefix rows match
   case "$id" in
     ''|*[!A-Za-z0-9._-]*) fail "task id must be a slug: $id" ;;
   esac
-  prefix=${id%-*}
   rows=$(project_rows) || exit 2
-  PROJECT_PATH=$(printf '%s\n' "$rows" | awk -F '\t' -v p="$prefix" '$1 == p { print $2; exit }')
-  if [ "$prefix" = "$id" ] || [ -z "$PROJECT_PATH" ]; then
-    not_found "$id" "prefix '$prefix' of $id is not listed in $PROJECTS_FILE"
-  fi
+  match=$(printf '%s\n' "$rows" | awk -F '\t' -v id="$id" '
+    index(id, $1 "-") == 1 && length($1) > best { best = length($1); line = $0 }
+    END { if (line != "") print line }
+  ')
+  [ -n "$match" ] || not_found "$id" "no prefix of '$id' is listed in $PROJECTS_FILE"
+  prefix=${match%%$'\t'*}
+  PROJECT_PATH=${match#*$'\t'}
   [ -d "$PROJECT_PATH" ] || fail "tracker path for prefix '$prefix' is not a directory: $PROJECT_PATH"
 }
 
