@@ -113,6 +113,7 @@ init_changed_fixture_repo() {
     fm-pr-merge.test.sh \
     fm-procevent-quota.test.sh \
     fm-quota-choose.test.sh \
+    fm-quota-lib.test.sh \
     fm-pi-watch-extension.test.sh \
     fm-pi-windows-shell-invocation.test.sh \
     fm-afk-return.test.sh \
@@ -391,6 +392,8 @@ test_changed_dependency_selection_and_unmapped_failure() {
     "shared quota validator selects process-event coverage"
   assert_contains "$listed" "tests/fm-quota-choose.test.sh" \
     "shared quota validator selects chooser coverage"
+  assert_contains "$listed" "tests/fm-quota-lib.test.sh" \
+    "shared quota validator selects its own coverage"
   git -C "$repo" add bin/fm-quota-lib.sh
   git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm quota-validator-change
 

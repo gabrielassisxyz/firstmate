@@ -1,0 +1,479 @@
+{
+  "schema": 5,
+  "command": "status",
+  "run": "run-2452951-1790698891920646325-0",
+  "generated_at": 1790698891920646325,
+  "knowledge_at": 1790698891920646325,
+  "ledger_generation": 121490,
+  "accounts": [
+    {
+      "account": "primary",
+      "freshness": "stale",
+      "reason": "credential_changed_unverified",
+      "last_good": {
+        "value": "910000",
+        "unit": "ppm"
+      },
+      "latest_attempt": 60759,
+      "observation_age_nanos": 517531211993852,
+      "included_scopes": [
+        "account_wide",
+        "model:fable"
+      ],
+      "limiting_window": {
+        "scope": "account_wide",
+        "nominal_duration_nanos": 18000000000000,
+        "burn_rate": "0.090000",
+        "capped_at": null
+      },
+      "windows": [
+        {
+          "semantic_key": "session",
+          "scope": "account_wide",
+          "quota_used_ppm": 90000,
+          "resets_at_nanos": 1790195999605568000,
+          "nominal_duration_nanos": 18000000000000,
+          "burn_rate": "0.090000",
+          "capped_at": null,
+          "observation_freshness": "stale"
+        },
+        {
+          "semantic_key": "weekly_all",
+          "scope": "account_wide",
+          "quota_used_ppm": 30000,
+          "resets_at_nanos": 1790776799605585000,
+          "nominal_duration_nanos": 604800000000000,
+          "burn_rate": "0.034436",
+          "capped_at": null,
+          "observation_freshness": "stale"
+        },
+        {
+          "semantic_key": "weekly_scoped_fable",
+          "scope": "model",
+          "model": "fable",
+          "quota_used_ppm": 40000,
+          "resets_at_nanos": 1790776799605753000,
+          "nominal_duration_nanos": 604800000000000,
+          "burn_rate": "0.045915",
+          "capped_at": null,
+          "observation_freshness": "stale"
+        }
+      ]
+    },
+    {
+      "account": "gmail",
+      "freshness": "fresh",
+      "remaining": {
+        "value": "950000",
+        "unit": "ppm"
+      },
+      "latest_attempt": 60753,
+      "observation_age_nanos": 90458340668,
+      "included_scopes": [
+        "account_wide"
+      ],
+      "limiting_window": {
+        "scope": "account_wide",
+        "nominal_duration_nanos": 604800000000000,
+        "burn_rate": "0.116088",
+        "capped_at": null
+      },
+      "windows": [
+        {
+          "semantic_key": "session",
+          "scope": "account_wide",
+          "quota_used_ppm": 0,
+          "resets_at_nanos": null,
+          "nominal_duration_nanos": 18000000000000,
+          "burn_rate": null,
+          "capped_at": null,
+          "observation_freshness": "fresh"
+        },
+        {
+          "semantic_key": "weekly_all",
+          "scope": "account_wide",
+          "quota_used_ppm": 50000,
+          "resets_at_nanos": 1791043200345415000,
+          "nominal_duration_nanos": 604800000000000,
+          "burn_rate": "0.116088",
+          "capped_at": null,
+          "observation_freshness": "fresh"
+        }
+      ]
+    },
+    {
+      "account": "bianca",
+      "freshness": "fresh",
+      "remaining": {
+        "value": "1000000",
+        "unit": "ppm"
+      },
+      "latest_attempt": 60754,
+      "observation_age_nanos": 90514666440,
+      "included_scopes": [
+        "account_wide"
+      ],
+      "limiting_window": {
+        "scope": "account_wide",
+        "nominal_duration_nanos": 18000000000000,
+        "burn_rate": null,
+        "capped_at": null
+      },
+      "windows": [
+        {
+          "semantic_key": "session",
+          "scope": "account_wide",
+          "quota_used_ppm": 0,
+          "resets_at_nanos": null,
+          "nominal_duration_nanos": 18000000000000,
+          "burn_rate": null,
+          "capped_at": null,
+          "observation_freshness": "fresh"
+        },
+        {
+          "semantic_key": "weekly_all",
+          "scope": "account_wide",
+          "quota_used_ppm": 0,
+          "resets_at_nanos": 1791302400000000000,
+          "nominal_duration_nanos": 604800000000000,
+          "burn_rate": null,
+          "capped_at": null,
+          "observation_freshness": "fresh"
+        }
+      ]
+    },
+    {
+      "account": "codex-primary",
+      "freshness": "fresh",
+      "remaining": {
+        "value": "840000",
+        "unit": "ppm"
+      },
+      "latest_attempt": 60750,
+      "observation_age_nanos": 270546341406,
+      "included_scopes": [
+        "account_wide"
+      ],
+      "limiting_window": {
+        "scope": "account_wide",
+        "nominal_duration_nanos": 604800000000000,
+        "burn_rate": "0.400457",
+        "capped_at": null
+      },
+      "windows": [
+        {
+          "semantic_key": "primary",
+          "scope": "account_wide",
+          "quota_used_ppm": 0,
+          "resets_at_nanos": null,
+          "nominal_duration_nanos": 18000000000000,
+          "burn_rate": null,
+          "capped_at": null,
+          "observation_freshness": "fresh"
+        },
+        {
+          "semantic_key": "secondary",
+          "scope": "account_wide",
+          "quota_used_ppm": 160000,
+          "resets_at_nanos": 1791062048000000000,
+          "nominal_duration_nanos": 604800000000000,
+          "burn_rate": "0.400457",
+          "capped_at": null,
+          "observation_freshness": "fresh"
+        }
+      ]
+    },
+    {
+      "account": "codex-bianca",
+      "freshness": "fresh",
+      "remaining": {
+        "value": "1000000",
+        "unit": "ppm"
+      },
+      "latest_attempt": 60755,
+      "observation_age_nanos": 89872498745,
+      "included_scopes": [
+        "account_wide"
+      ],
+      "limiting_window": {
+        "scope": "account_wide",
+        "nominal_duration_nanos": 18000000000000,
+        "burn_rate": null,
+        "capped_at": null
+      },
+      "windows": [
+        {
+          "semantic_key": "primary",
+          "scope": "account_wide",
+          "quota_used_ppm": 0,
+          "resets_at_nanos": null,
+          "nominal_duration_nanos": 18000000000000,
+          "burn_rate": null,
+          "capped_at": null,
+          "observation_freshness": "fresh"
+        },
+        {
+          "semantic_key": "secondary",
+          "scope": "account_wide",
+          "quota_used_ppm": 0,
+          "resets_at_nanos": null,
+          "nominal_duration_nanos": 604800000000000,
+          "burn_rate": null,
+          "capped_at": null,
+          "observation_freshness": "fresh"
+        }
+      ]
+    },
+    {
+      "account": "k1",
+      "freshness": "fresh",
+      "remaining": {
+        "value": "1000000",
+        "unit": "ppm"
+      },
+      "latest_attempt": 60756,
+      "observation_age_nanos": 90163046936,
+      "included_scopes": [
+        "account_wide"
+      ],
+      "limiting_window": {
+        "scope": "account_wide",
+        "nominal_duration_nanos": 18000000000000,
+        "burn_rate": "0.000000",
+        "capped_at": null
+      },
+      "windows": [
+        {
+          "semantic_key": "session",
+          "scope": "account_wide",
+          "quota_used_ppm": 0,
+          "resets_at_nanos": 1790712000000000000,
+          "nominal_duration_nanos": 18000000000000,
+          "burn_rate": "0.000000",
+          "capped_at": null,
+          "observation_freshness": "fresh"
+        },
+        {
+          "semantic_key": "weekly",
+          "scope": "account_wide",
+          "quota_used_ppm": 0,
+          "resets_at_nanos": 1791158400000000000,
+          "nominal_duration_nanos": 604800000000000,
+          "burn_rate": "0.000000",
+          "capped_at": null,
+          "observation_freshness": "fresh"
+        }
+      ]
+    },
+    {
+      "account": "k2",
+      "freshness": "fresh",
+      "remaining": {
+        "value": "1000000",
+        "unit": "ppm"
+      },
+      "latest_attempt": 60757,
+      "observation_age_nanos": 89841390388,
+      "included_scopes": [
+        "account_wide"
+      ],
+      "limiting_window": {
+        "scope": "account_wide",
+        "nominal_duration_nanos": 18000000000000,
+        "burn_rate": "0.000000",
+        "capped_at": null
+      },
+      "windows": [
+        {
+          "semantic_key": "session",
+          "scope": "account_wide",
+          "quota_used_ppm": 0,
+          "resets_at_nanos": 1790712000000000000,
+          "nominal_duration_nanos": 18000000000000,
+          "burn_rate": "0.000000",
+          "capped_at": null,
+          "observation_freshness": "fresh"
+        },
+        {
+          "semantic_key": "weekly",
+          "scope": "account_wide",
+          "quota_used_ppm": 0,
+          "resets_at_nanos": 1791158400000000000,
+          "nominal_duration_nanos": 604800000000000,
+          "burn_rate": "0.000000",
+          "capped_at": null,
+          "observation_freshness": "fresh"
+        }
+      ]
+    },
+    {
+      "account": "k3",
+      "freshness": "fresh",
+      "remaining": {
+        "value": "1000000",
+        "unit": "ppm"
+      },
+      "latest_attempt": 60758,
+      "observation_age_nanos": 89556432850,
+      "included_scopes": [
+        "account_wide"
+      ],
+      "limiting_window": {
+        "scope": "account_wide",
+        "nominal_duration_nanos": 18000000000000,
+        "burn_rate": "0.000000",
+        "capped_at": null
+      },
+      "windows": [
+        {
+          "semantic_key": "session",
+          "scope": "account_wide",
+          "quota_used_ppm": 0,
+          "resets_at_nanos": 1790712000000000000,
+          "nominal_duration_nanos": 18000000000000,
+          "burn_rate": "0.000000",
+          "capped_at": null,
+          "observation_freshness": "fresh"
+        },
+        {
+          "semantic_key": "weekly",
+          "scope": "account_wide",
+          "quota_used_ppm": 0,
+          "resets_at_nanos": 1791158400000000000,
+          "nominal_duration_nanos": 604800000000000,
+          "burn_rate": "0.000000",
+          "capped_at": null,
+          "observation_freshness": "fresh"
+        }
+      ]
+    },
+    {
+      "account": "agy",
+      "freshness": "fresh",
+      "remaining": {
+        "value": "955968",
+        "unit": "ppm"
+      },
+      "latest_attempt": 60752,
+      "observation_age_nanos": 149813410085,
+      "included_scopes": [
+        "group:Gemini Models",
+        "group:Claude and GPT models"
+      ],
+      "limiting_window": {
+        "scope": {
+          "kind": "model_group",
+          "group": "Gemini Models"
+        },
+        "nominal_duration_nanos": 604800000000000,
+        "burn_rate": "0.261353",
+        "capped_at": null
+      },
+      "windows": [
+        {
+          "semantic_key": "weekly",
+          "scope": {
+            "kind": "model_group",
+            "group": "Gemini Models"
+          },
+          "quota_used_ppm": 44032,
+          "resets_at_nanos": 1791201797000000000,
+          "nominal_duration_nanos": 604800000000000,
+          "burn_rate": "0.261353",
+          "capped_at": null,
+          "observation_freshness": "fresh"
+        },
+        {
+          "semantic_key": "5h",
+          "scope": {
+            "kind": "model_group",
+            "group": "Gemini Models"
+          },
+          "quota_used_ppm": 0,
+          "resets_at_nanos": 1790716741000000000,
+          "nominal_duration_nanos": 18000000000000,
+          "burn_rate": null,
+          "capped_at": null,
+          "observation_freshness": "fresh"
+        },
+        {
+          "semantic_key": "weekly",
+          "scope": {
+            "kind": "model_group",
+            "group": "Claude and GPT models"
+          },
+          "quota_used_ppm": 0,
+          "resets_at_nanos": 1791303541000000000,
+          "nominal_duration_nanos": 604800000000000,
+          "burn_rate": null,
+          "capped_at": null,
+          "observation_freshness": "fresh"
+        },
+        {
+          "semantic_key": "5h",
+          "scope": {
+            "kind": "model_group",
+            "group": "Claude and GPT models"
+          },
+          "quota_used_ppm": 0,
+          "resets_at_nanos": 1790716741000000000,
+          "nominal_duration_nanos": 18000000000000,
+          "burn_rate": null,
+          "capped_at": null,
+          "observation_freshness": "fresh"
+        }
+      ]
+    },
+    {
+      "account": "opencode-go",
+      "freshness": "fresh",
+      "remaining": {
+        "value": "851674",
+        "unit": "ppm"
+      },
+      "latest_attempt": 60751,
+      "observation_age_nanos": 210543089561,
+      "included_scopes": [
+        "account_wide"
+      ],
+      "limiting_window": {
+        "scope": "account_wide",
+        "nominal_duration_nanos": 2592000000000000,
+        "burn_rate": "0.180071",
+        "capped_at": null
+      },
+      "windows": [
+        {
+          "semantic_key": "rolling",
+          "scope": "account_wide",
+          "quota_used_ppm": 0,
+          "resets_at_nanos": null,
+          "nominal_duration_nanos": 18000000000000,
+          "burn_rate": null,
+          "capped_at": null,
+          "observation_freshness": "fresh"
+        },
+        {
+          "semantic_key": "weekly",
+          "scope": "account_wide",
+          "quota_used_ppm": 0,
+          "resets_at_nanos": 1791158400000000000,
+          "nominal_duration_nanos": 604800000000000,
+          "burn_rate": "0.000000",
+          "capped_at": null,
+          "observation_freshness": "fresh"
+        },
+        {
+          "semantic_key": "monthly",
+          "scope": "account_wide",
+          "quota_used_ppm": 148326,
+          "resets_at_nanos": 1791155845000000000,
+          "nominal_duration_nanos": 2592000000000000,
+          "burn_rate": "0.180071",
+          "capped_at": null,
+          "observation_freshness": "fresh"
+        }
+      ]
+    }
+  ]
+}

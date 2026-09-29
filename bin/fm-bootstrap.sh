@@ -65,11 +65,12 @@
 #          nonvisual dispatch continues with plain-text decisions and reports,
 #          but Lavish use still requires a compatible build at or above its floor.
 #          tasks-axi feature probes remain a separate defense-in-depth check.
-#          tasks-axi and quota-axi are essential bootstrap tools.
+#          tasks-axi and aub (agent-usage-book) are essential bootstrap tools.
 #          A compatible tasks-axi default backend is silent.
-#          quota-axi is required for the agent-owned dispatch-profile array
+#          aub is the quota source for the agent-owned dispatch-profile array
 #          procedure in AGENTS.md section 4 and
-#          .agents/skills/quota-array-dispatch/SKILL.md.
+#          .agents/skills/quota-array-dispatch/SKILL.md; bin/fm-quota-lib.sh
+#          owns its compatibility check and install hint.
 #          On a primary home, the locked mutable path materializes the visible
 #          default config/startup-memory-budget=7500 when absent. It never
 #          guesses at malformed or unsafe existing files, and secondmate homes
@@ -801,7 +802,8 @@ install_cmd() {
     treehouse) echo "curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh" ;;
     no-mistakes) echo "curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh" ;;
     gh-axi|chrome-devtools-axi|lavish-axi) echo "npm install -g $1 && $1 setup hooks" ;;
-    tasks-axi|quota-axi) echo "npm install -g $1" ;;
+    tasks-axi) echo "npm install -g $1" ;;
+    aub) echo "$FM_QUOTA_AUB_INSTALL" ;;
     *) return 1 ;;
   esac
 }
@@ -828,7 +830,7 @@ missing_tool_diagnostic() {
 # fm_backend_required_tools (bin/fm-backend.sh). So a herdr/zellij/cmux home is
 # never told tmux is missing, and only orca drops treehouse. A backend value with
 # no verified dependency set is reported before the universal checks continue.
-COMMON_TOOLS="node git gh no-mistakes gh-axi chrome-devtools-axi tasks-axi quota-axi"
+COMMON_TOOLS="node git gh no-mistakes gh-axi chrome-devtools-axi tasks-axi aub"
 BACKEND=$(fm_backend_name)
 BACKEND_VALID=1
 if ! BACKEND_TOOLS=$(fm_backend_required_tools "$BACKEND"); then
@@ -1081,8 +1083,8 @@ crew_dispatch_validate() {
       or ($items | any(has("effort") and (((.effort | type) != "string") or (.effort | length) == 0)))
       or ($typed and ($items | any(has("provider") and (provider_id(.provider) | not))));
     # A quota floor, on a rule or a profile: bin/fm-dispatch-resolve.sh applies
-    # it in code against one quota-axi row, so scope and min_percent must be
-    # concrete; a rule floor also names the provider whose row it reads.
+    # it in code against the windows of one aub account, so scope and min_percent
+    # must be concrete; a rule floor also names that account as `provider`.
     def floor_bad($f; $need_provider):
       ($f | type) != "object"
       or (($f.scope | type) != "string") or (($f.scope | length) == 0)
@@ -1408,8 +1410,8 @@ detect_local_tools() {
   if ! tool_version_at_least lavish-axi "$LAVISH_AXI_MIN"; then
     echo "PRESENTATION_UNAVAILABLE: lavish-axi (requires >=$LAVISH_AXI_MIN; install: $(install_cmd lavish-axi)) - nonvisual work may proceed with plain-text decisions and reports; install or upgrade before using Lavish"
   fi
-  if command -v quota-axi >/dev/null 2>&1 && ! fm_quota_axi_compatible; then
-    echo "MISSING: quota-axi (install: $(install_cmd quota-axi))"
+  if command -v aub >/dev/null 2>&1 && ! fm_quota_source_compatible 2>/dev/null; then
+    echo "MISSING: aub (install: $(install_cmd aub))"
   fi
   if command -v tasks-axi >/dev/null 2>&1 && ! fm_tasks_axi_compatible; then
     echo "MISSING: tasks-axi (install: $(install_cmd tasks-axi))"

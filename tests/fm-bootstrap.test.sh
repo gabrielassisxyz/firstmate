@@ -4,13 +4,13 @@
 # Bootstrap prints one block or line per actionable problem, optional verbose
 # BOOTSTRAP_INFO fact, or completed bootstrap no-action fact and is silent when
 # all is well. firstmate consumes the exact 'MISSING: treehouse (install: ...)',
-# 'MISSING: tasks-axi (install: ...)', 'MISSING: quota-axi (install: ...)',
+# 'MISSING: tasks-axi (install: ...)', 'MISSING: aub (install: ...)',
 # 'MISSING: gh-axi (install: ...)', 'PRESENTATION_UNAVAILABLE: lavish-axi ...', and
 # 'BOOTSTRAP_INFO: ...' lines, so those contracts are pinned verbatim. The cases
 # are table-driven over the inputs that vary: whether `treehouse get --help`
 # advertises --lease, which (if any) tasks-axi version is on PATH, whether
 # tasks-axi update advertises --archive-body, whether its mv help advertises
-# multi-ID moves, whether quota-axi is on PATH,
+# multi-ID moves, whether aub is on PATH,
 # whether the local backend config opts out of tasks-axi backlog mutations,
 # which no-mistakes version is on PATH, which gh-axi version is on PATH, and
 # which lavish-axi version is on PATH.
@@ -86,21 +86,32 @@ exit 0
 SH
   chmod +x "$fakebin/no-mistakes"
   add_tasks_axi "$fakebin" "0.2.6"
-  add_quota_axi "$fakebin"
+  add_aub "$fakebin"
   printf '%s\n' "$fakebin"
 }
 
-add_quota_axi() {
+# A fake aub answering --version and `status --format json`; FM_FAKE_AUB_MODE
+# breaks one of the two for the compatibility rows.
+add_aub() {
   local fakebin=$1
-  cat > "$fakebin/quota-axi" <<'SH'
+  cat > "$fakebin/aub" <<'SH'
 #!/usr/bin/env bash
 if [ "${1:-}" = --version ]; then
-  printf '%s\n' "${FM_FAKE_QUOTA_AXI_VERSION:-0.1.51}"
+  [ "${FM_FAKE_AUB_MODE:-}" != no-version ] || exit 1
+  printf '%s\n' 'aub 0.1.0 (fake)'
   exit 0
 fi
-exit 0
+if [ "$*" = 'status --format json' ]; then
+  case "${FM_FAKE_AUB_MODE:-}" in
+    schema4) printf '%s\n' '{"schema":4,"generated_at":1,"accounts":[{"account":"primary","freshness":"fresh","windows":[]}]}' ;;
+    fails) exit 1 ;;
+    *) printf '%s\n' '{"schema":5,"generated_at":1,"accounts":[{"account":"primary","freshness":"fresh","windows":[]}]}' ;;
+  esac
+  exit 0
+fi
+exit 2
 SH
-  chmod +x "$fakebin/quota-axi"
+  chmod +x "$fakebin/aub"
 }
 
 add_tasks_axi() {
@@ -284,7 +295,7 @@ test_bootstrap_reporting() {
       add_tasks_axi "$fakebin" "$tasks" "$archive_body" "$multi_id"
     fi
     if [ "$quota" = "0" ]; then
-      rm -f "$fakebin/quota-axi"
+      rm -f "$fakebin/aub"
     fi
     # FM_ROOT_OVERRIDE points the worktree-tangle check at the non-git home dir so
     # it stays inert: this suite pins tool detection, not the tangle guard, and the
@@ -311,11 +322,11 @@ missing tasks-axi is required by default^1^-^1^-^exact^MISSING: tasks-axi (insta
 incompatible tasks-axi is required by default^1^0.1.0^1^-^exact^MISSING: tasks-axi (install: npm install -g tasks-axi)^
 tasks-axi without archive-body is required by default^1^0.2.6:noarchive^1^-^exact^MISSING: tasks-axi (install: npm install -g tasks-axi)^
 tasks-axi without multi-id mv is required by default^1^0.2.6:nomulti^1^-^exact^MISSING: tasks-axi (install: npm install -g tasks-axi)^
-missing quota-axi is required by default^1^0.2.6^0^manual^exact^MISSING: quota-axi (install: npm install -g quota-axi)^
+missing aub is required by default^1^0.2.6^0^manual^exact^MISSING: aub (install: cargo install --git https://github.com/gabrielassisxyz/agent-usage-book)^
 manual backlog backend still requires missing tasks-axi^1^-^1^manual^exact^MISSING: tasks-axi (install: npm install -g tasks-axi)^
 manual backlog backend suppresses tasks-axi availability^1^0.2.6^1^manual^empty^^
 ROWS
-  pass "bootstrap reports treehouse lease + tasks-axi/quota-axi bootstrap contracts"
+  pass "bootstrap reports treehouse lease + tasks-axi/aub bootstrap contracts"
 }
 
 test_no_mistakes_min_version() {
@@ -462,37 +473,35 @@ ROWS
   pass "bootstrap enforces tasks-axi minimum version"
 }
 
-# These rows exercise the real bootstrap check with a fake quota-axi answering
-# --version: below the floor produces MISSING, while at or above is silent.
-test_quota_axi_min_version() {
-  local label version mode case_dir fakebin out missing n
-  missing='MISSING: quota-axi (install: npm install -g quota-axi)'
+# These rows exercise the real bootstrap check with a fake aub: an aub that
+# fails --version or whose status is not a schema 5 snapshot reports MISSING.
+test_aub_compatibility() {
+  local label mode expect case_dir fakebin out missing n
+  missing='MISSING: aub (install: cargo install --git https://github.com/gabrielassisxyz/agent-usage-book)'
   n=0
-  while IFS='^' read -r label version mode; do
+  while IFS='^' read -r label mode expect; do
     [ -n "$label" ] || continue
     n=$((n + 1))
-    case_dir="$TMP_ROOT/quota-axi-$n"
+    case_dir="$TMP_ROOT/aub-$n"
     mkdir -p "$case_dir/home/config"
     printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
     fakebin=$(make_fake_toolchain "$case_dir")
     out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-      FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_FAKE_QUOTA_AXI_VERSION="$version" "$ROOT/bin/fm-bootstrap.sh")
-    case "$mode" in
+      FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_FAKE_AUB_MODE="$mode" "$ROOT/bin/fm-bootstrap.sh")
+    case "$expect" in
       empty)
         [ -z "$out" ] || fail "$label: expected silence, got: $out" ;;
       missing)
         [ "$out" = "$missing" ] || fail "$label: expected '$missing', got: $out" ;;
     esac
+    case "$out" in *quota-axi*) fail "$label: bootstrap still mentions quota-axi: $out" ;; esac
   done <<'ROWS'
-minimum quota-axi version is accepted^0.1.51^empty
-newer quota-axi patch is accepted^0.1.52^empty
-newer quota-axi minor is accepted^0.2.0^empty
-newer quota-axi major is accepted^1.0.0^empty
-the patch just below the floor reports an upgrade^0.1.50^missing
-much older quota-axi minor reports an upgrade^0.0.9^missing
-unparseable quota-axi version reports an upgrade^quota-axi development build^missing
+aub answering a schema 5 snapshot is accepted^ok^empty
+aub answering schema 4 reports it^schema4^missing
+aub whose status fails reports it^fails^missing
+aub whose --version fails reports it^no-version^missing
 ROWS
-  pass "bootstrap enforces quota-axi minimum version"
+  pass "bootstrap requires an aub that answers a schema 5 snapshot"
 }
 
 test_git_is_required_with_supported_install_instruction() {
@@ -1268,7 +1277,7 @@ test_no_mistakes_min_version
 test_gh_axi_min_version
 test_lavish_axi_min_version
 test_tasks_axi_min_version
-test_quota_axi_min_version
+test_aub_compatibility
 test_git_is_required_with_supported_install_instruction
 test_orca_backend_gates_orca_tool_only_when_selected
 test_session_provider_backends_do_not_require_tmux

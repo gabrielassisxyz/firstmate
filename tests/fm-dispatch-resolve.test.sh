@@ -4,9 +4,9 @@
 # Drives the public argv and environment interface with a fake curl on PATH
 # that records argv, the request body it read from stdin, and the header it
 # read from file descriptor 3, and answers with a canned typesafe.ai response.
-# A fake quota-axi serves the selected schema-5 fixture. No case touches the
-# network, and the absent-key case proves the tool makes no call
-# at all.
+# A fake aub serves the selected `aub status --format json` fixture, and the
+# isolated home declares its accounts in config/accounts. No case touches the
+# network, and the absent-key case proves the tool makes no call at all.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -38,15 +38,15 @@ cat > "$BASE_RULES" <<'JSON'
   "rules": [
     {
       "when": "New feature work on the app.",
-      "floor": { "scope": "model:fable", "min_percent": 20, "provider": "claude" },
+      "floor": { "scope": "model:fable", "min_percent": 20, "provider": "primary" },
       "use": { "harness": "claude", "model": "fable", "effort": "xhigh" },
       "why": "SECRET-WHY-TEXT feature work wants the strongest model"
     },
     {
       "when": "The task generates images.",
       "use": [
-        { "harness": "pi", "model": "openai-codex/gpt-5.6-sol", "provider": "codex" },
-        { "harness": "codex", "model": "gpt-5.6-sol", "floor": { "scope": "all_models", "min_percent": 50 } }
+        { "harness": "pi", "model": "openai-codex/gpt-5.6-sol", "provider": "codex-primary" },
+        { "harness": "codex", "model": "gpt-5.6-sol", "floor": { "scope": "account_wide", "min_percent": 50 } }
       ]
     },
     {
@@ -71,30 +71,59 @@ cat > "$BASE_RULES" <<'JSON'
 JSON
 cp "$BASE_RULES" "$RULES"
 
-write_quota() {  # <path> <cursor spendPriority> [<claude all_models spendPriority>]
-  local path=$1 cursor=$2 claude=${3:--0.4627}
-  cat > "$path" <<JSON
-{
-  "generatedAt": "2030-01-01T00:00:00Z",
-  "schemaVersion": 5,
-  "providers": [
-    { "provider": "claude", "state": { "status": "fresh" }, "quotaSemantics": { "status": "known", "effectiveAvailability": [
-      { "scope": "all_models", "status": "known", "effectivePercentRemaining": 79, "runway": { "status": "projected_exhaustion" }, "selection": { "spendPriority": $claude } },
-      { "scope": "model:fable", "status": "known", "effectivePercentRemaining": 15, "runway": { "status": "projected_exhaustion" }, "selection": { "spendPriority": -0.79 } } ] } },
-    { "provider": "codex", "state": { "status": "fresh" }, "quotaSemantics": { "status": "known", "effectiveAvailability": [
-      { "scope": "all_models", "status": "known", "effectivePercentRemaining": 31, "runway": { "status": "projected_exhaustion" }, "selection": { "spendPriority": -0.1649 } } ] } },
-    { "provider": "cursor", "state": { "status": "fresh" }, "quotaSemantics": { "status": "known", "effectiveAvailability": [
-      { "scope": "all_models", "status": "known", "effectivePercentRemaining": 91, "runway": { "status": "through_reset" }, "selection": { "spendPriority": $cursor } } ] } },
-    { "provider": "agy", "state": { "status": "fresh" }, "quotaSemantics": { "status": "known", "effectiveAvailability": [
-      { "scope": "all_models", "status": "known", "effectivePercentRemaining": 64, "runway": { "status": "through_reset" }, "selection": { "spendPriority": 0.4 } } ] } },
-    { "provider": "google", "state": { "status": "fresh" }, "quotaSemantics": { "status": "known", "effectiveAvailability": [
-      { "scope": "all_models", "status": "known", "effectivePercentRemaining": 72, "runway": { "status": "through_reset" }, "selection": { "spendPriority": 0.3 } } ] } },
-    { "provider": "kimi", "state": { "status": "unknown" }, "quotaSemantics": { "status": "unknown", "effectiveAvailability": [] } }
-  ]
+# kimi has no account at all, so its profile is measured nowhere.
+cat > "$HOME_DIR/config/accounts" <<'ACCOUNTS'
+primary claude CLAUDE_CONFIG_DIR=/accounts/primary
+gmail claude CLAUDE_CONFIG_DIR=/accounts/gmail
+codex-primary codex CODEX_HOME=/accounts/codex-primary
+cursor-main cursor CURSOR_CONFIG_DIR=/accounts/cursor-main
+ACCOUNTS
+
+# aub_account <name> <freshness> <remaining %> <burn> <elapsed fraction> [<age ns>]
+# One aub account whose single account-wide weekly window is its limiting window.
+NOW=2000000000000000000
+WEEK=604800000000000
+aub_account() {
+  jq -nc --arg name "$1" --arg fresh "$2" --argjson r "$3" --arg b "$4" --argjson e "$5" \
+    --argjson age "${6:-60000000000}" --argjson now "$NOW" --argjson week "$WEEK" '
+    {account: $name, freshness: $fresh, observation_age_nanos: $age,
+     limiting_window: {scope: "account_wide", nominal_duration_nanos: $week, burn_rate: $b},
+     windows: [{semantic_key: "weekly", scope: "account_wide",
+       quota_used_ppm: ((100 - $r) * 10000 | round),
+       resets_at_nanos: ($now + (1 - $e) * $week),
+       nominal_duration_nanos: $week, burn_rate: $b, observation_freshness: $fresh}]}
+    + (if $fresh == "fresh" then {} else {reason: "test"} end)'
 }
-JSON
+
+# write_aub <path> <account-json>...: one schema 5 status envelope.
+write_aub() {
+  local path=$1
+  shift
+  printf '%s\n' "$@" | jq -s --argjson now "$NOW" '
+    {schema: 5, command: "status", run: "run-test", generated_at: $now,
+     knowledge_at: $now, ledger_generation: 1, accounts: .}' > "$path"
 }
-write_quota "$QUOTA" 0.7597
+
+# The base snapshot: reserves are primary -20, gmail 77, codex-primary -19,
+# cursor-main 86, agy 64, google 72; primary also carries a 15% fable window.
+base_accounts() {
+  aub_account primary fresh 40 1.5 0.6 | jq -c --argjson now "$NOW" --argjson week "$WEEK" '
+    .windows += [{semantic_key: "weekly_scoped_fable", scope: "model", model: "fable",
+      quota_used_ppm: 850000, resets_at_nanos: ($now + $week / 2), nominal_duration_nanos: $week,
+      burn_rate: "1.0", observation_freshness: "fresh"}]'
+  aub_account gmail fresh 95 0.2 0.1
+  aub_account codex-primary fresh 31 1.0 0.5
+  aub_account cursor-main fresh 91 0.1 0.5
+  aub_account agy fresh 64 0 0.5
+  aub_account google fresh 72 0 0.5
+}
+mapfile -t BASE_ACCOUNTS < <(base_accounts)
+write_aub "$QUOTA" "${BASE_ACCOUNTS[@]}"
+
+# with_account <out> <jq filter on the named account> <name>: a base-snapshot variant.
+with_account() {
+  jq --arg name "$3" "(.accounts[] | select(.account == \$name)) |= ($2)" "$QUOTA" > "$1"
+}
 
 write_response() {  # <path> <choice> <confidence>
   cat > "$1" <<JSON
@@ -135,23 +164,23 @@ printf '%s' "${FAKE_CURL_HTTP:-200}"
 SH
 chmod +x "$FAKEBIN/curl"
 
-cat > "$FAKEBIN/quota-axi" <<'SH'
+cat > "$FAKEBIN/aub" <<'SH'
 #!/usr/bin/env bash
 set -u
 if [ -n "${TYPESAFE_API_KEY+x}" ] || [ -n "${TYPESAFE_API_KEY_PRIVATE+x}" ]; then
-  printf 'quota-axi:secret-present\n' >> "${CHILD_ENV_LOG:?}"
+  printf 'aub:secret-present\n' >> "${CHILD_ENV_LOG:?}"
 else
-  printf 'quota-axi:clean\n' >> "${CHILD_ENV_LOG:?}"
+  printf 'aub:clean\n' >> "${CHILD_ENV_LOG:?}"
 fi
-printf '%s\n' "$*" >> "${QUOTA_AXI_CALLS:?}"
+printf '%s\n' "$*" >> "${AUB_CALLS:?}"
 [ "${FAKE_QUOTA_FAIL:-0}" = 1 ] && exit 1
-[ "${1:-}" = --json ] || exit 2
-cat "${QUOTA_AXI_FIXTURE:?}"
+[ "$*" = 'status --format json' ] || exit 2
+cat "${AUB_FIXTURE:?}"
 SH
-chmod +x "$FAKEBIN/quota-axi"
+chmod +x "$FAKEBIN/aub"
 
 RESPONSE="$TMP_ROOT/response.json"
-export FAKE_CURL_LOG="$LOG" FAKE_CURL_RESPONSE="$RESPONSE" QUOTA_AXI_CALLS="$LOG/quota-axi.calls" QUOTA_AXI_FIXTURE="$QUOTA" CHILD_ENV_LOG="$LOG/child-env"
+export FAKE_CURL_LOG="$LOG" FAKE_CURL_RESPONSE="$RESPONSE" AUB_CALLS="$LOG/aub.calls" AUB_FIXTURE="$QUOTA" CHILD_ENV_LOG="$LOG/child-env"
 
 reset_log() {
   rm -rf "$LOG"
@@ -163,7 +192,7 @@ reset_log() {
 run() {
   local __exit=$1 __out=$2 __err=$3 _out _code
   shift 3
-  _out=$(PATH="$FAKEBIN:$BASE_PATH" FM_HOME="$HOME_DIR" "$TOOL" "$@" 2> "$TMP_ROOT/stderr")
+  _out=$(PATH="${RUN_PATH:-$FAKEBIN:$BASE_PATH}" FM_HOME="$HOME_DIR" "$TOOL" "$@" 2> "$TMP_ROOT/stderr")
   _code=$?
   printf -v "$__exit" '%s' "$_code"
   printf -v "$__out" '%s' "$_out"
@@ -191,7 +220,7 @@ expect_code 0 "$code" "absent key exits 0"
 assert_equals '' "$out" "absent key prints nothing on stdout"
 assert_contains "$err" 'dispatch-resolve: off (TYPESAFE_API_KEY absent from the environment and' "absent key explains itself on stderr"
 assert_absent "$LOG/argv" "absent key never calls curl"
-assert_absent "$LOG/quota-axi.calls" "absent key never reads quota-axi"
+assert_absent "$LOG/aub.calls" "absent key never reads aub"
 pass "absent key is off: one stderr line, exit 0, no network call"
 
 # --- .env key, and the environment wins over it ------------------------------
@@ -208,12 +237,14 @@ rm -f "$HOME_DIR/.env"
 OVERRIDE_CONFIG="$TMP_ROOT/override-config"
 mkdir -p "$OVERRIDE_CONFIG"
 cp "$BASE_RULES" "$OVERRIDE_CONFIG/crew-dispatch.json"
+cp "$HOME_DIR/config/accounts" "$OVERRIDE_CONFIG/accounts"
 reset_log
 TYPESAFE_API_KEY=$KEY FM_CONFIG_OVERRIDE="$OVERRIDE_CONFIG" run code out err "$BRIEF" --project pager
 assert_contains "$out" '  status: clear' "FM_CONFIG_OVERRIDE selects the canonical rules directory"
 pass "TYPESAFE_API_KEY= in .env activates the tool; environment and config overrides work"
 
-# --- clear: request shape, secret handling, argmax --------------------------
+
+# --- clear: request shape, secret handling, account ranking ------------------
 reset_log
 write_response "$RESPONSE" rule_4 0.9
 TYPESAFE_API_KEY=$KEY run code out err "$BRIEF" --project pager
@@ -221,9 +252,11 @@ expect_code 0 "$code" "clear exits 0"
 assert_contains "$out" 'dispatch-resolve:' "TOON block header"
 assert_contains "$out" '  status: clear' "clear status"
 assert_contains "$out" '  rule: rule_4 (A simple bug fix with a stated root cause.)   confidence: 0.9' "rule and confidence line"
-assert_contains "$out" "  profile: --harness 'cursor' --model 'cursor-grok-4.6-medium'" "argmax picks the highest spendPriority"
-assert_contains "$out" 'candidate: claude:sonnet  provider=claude  scope=all_models  remaining=79%  spendPriority=-0.4627  runway=projected_exhaustion  -> eligible' "every candidate is accounted for"
-assert_contains "$out" 'candidate: kimi:kimi-code/k3  provider=kimi  -> eligible, unranked: provider kimi unmeasured (unknown): disclosed uncertainty' "unmeasured provider stays listed as eligible and unranked"
+assert_contains "$out" '  account: cursor-main' "the chosen account is named"
+assert_contains "$out" "  profile: --harness 'cursor' --model 'cursor-grok-4.6-medium' --account 'cursor-main'" "the highest reserve wins and its account reaches the profile"
+assert_contains "$out" 'candidate: claude:sonnet  account=primary  freshness=fresh  scope=account_wide  remaining=40%  burn=1.5  elapsed=60%  reserve=-20  -> eligible' "every account of a profile is a candidate"
+assert_contains "$out" 'candidate: claude:sonnet  account=gmail  freshness=fresh  scope=account_wide  remaining=95%  burn=0.2  elapsed=10%  reserve=77  -> eligible' "each account carries its own evidence"
+assert_contains "$out" 'candidate: kimi:kimi-code/k3  -> eligible, unranked: no account for harness kimi: declare one in config/accounts or name provider on the profile: disclosed uncertainty' "a harness with no account stays listed as eligible and unranked"
 assert_contains "$out" '  note: 1 eligible candidate(s) unranked (kimi)' "clear results flag eligible unranked candidates once"
 assert_not_contains "$out" '--effort' "cursor profile without effort emits no --effort"
 argv=$(cat "$LOG/argv")
@@ -232,7 +265,7 @@ assert_contains "$argv" 'https://api.typesafe.ai/v1/systemone' "the request uses
 assert_contains "$argv" $'--max-time\n5' "the request uses the fixed five-second timeout"
 assert_contains "$argv" '@/dev/fd/3' "the header is read from a file descriptor"
 assert_equals "Authorization: Bearer $KEY" "$(cat "$LOG/header")" "curl receives the bearer header on fd 3"
-assert_equals $'curl:clean\nquota-axi:clean' "$(cat "$LOG/child-env")" "the API key is absent from every child environment"
+assert_equals $'curl:clean\naub:clean' "$(cat "$LOG/child-env")" "the API key is absent from every child environment"
 body=$(cat "$LOG/body")
 assert_equals 'jev-latest' "$(jq -r .model <<<"$body")" "default model is jev-latest"
 assert_equals 'pager' "$(jq -r .state.task.project <<<"$body")" "project rides in the state"
@@ -242,9 +275,9 @@ assert_equals '["default","rule_1","rule_2","rule_3","rule_4"]' "$(jq -c '.quest
 assert_equals 'No listed rule applies to this task.' "$(jq -r '.questions.rule.criteria.default' <<<"$body")" "the fixed generic none criterion is the default option"
 assert_equals 'A simple bug fix with a stated root cause.' "$(jq -r '.questions.rule.criteria.rule_4' <<<"$body")" "rule when text is the option verbatim"
 assert_not_contains "$body" 'SECRET-WHY-TEXT' "why text never leaves the machine"
-assert_not_contains "$body" 'spendPriority' "quota never leaves the machine"
+assert_not_contains "$body" 'cursor-main' "accounts never leave the machine"
 assert_not_contains "$body" 'cursor-grok' "use profiles never leave the machine"
-pass "clear: one rule Choice request, key on the fd header only, spendPriority argmax over every candidate"
+pass "clear: one rule Choice request, key on the fd header only, reserve ranking over every account"
 
 # --- never-send list: a match or a bad list withholds the request -------------
 NEVER_SEND="$HOME_DIR/config/dispatch-never-send"
@@ -266,7 +299,7 @@ expect_withheld() {  # <label> <stderr fragment> [<value that must not print>...
   assert_contains "$err" 'nothing sent)' "$label says nothing was sent"
   assert_equals '1' "$(grep -c . <<<"$err")" "$label prints one diagnostic line"
   assert_absent "$LOG/argv" "$label never calls curl"
-  assert_absent "$LOG/quota-axi.calls" "$label never reads quota"
+  assert_absent "$LOG/aub.calls" "$label never reads quota"
   local value
   for value in "$@"; do
     assert_not_contains "$err" "$value" "$label never prints the listed value"
@@ -360,7 +393,7 @@ assert_equals '1' "$(grep -c '^  profile:' <<<"$out")" "dynamic fields cannot in
 assert_not_contains "$out" $'\n  profile: injected' "control characters are flattened in line output"
 profile_line=$(grep '^  profile:' <<<"$out")
 eval "set -- ${profile_line#  profile: }"
-assert_equals '4' "$#" "shell-safe profile output preserves four argument boundaries"
+assert_equals '6' "$#" "shell-safe profile output preserves six argument boundaries"
 assert_equals 'cursor' "$2" "shell-safe profile output preserves the selected harness"
 assert_equals 'foo --harness grok   profile: injected' "$4" "shell-safe profile output keeps model flags inside one argument"
 cp "$BASE_RULES" "$RULES"
@@ -375,7 +408,7 @@ assert_contains "$out" '  status: escalate' "absent rules file is non-clear"
 assert_contains "$out" '  reason: no rules to match' "absent rules file returns control to firstmate"
 assert_not_contains "$out" '  profile:' "absent rules file emits no profile"
 assert_absent "$LOG/argv" "absent rules file never calls curl"
-assert_absent "$LOG/quota-axi.calls" "absent rules file never reads quota"
+assert_absent "$LOG/aub.calls" "absent rules file never reads quota"
 
 DEFAULT_ONLY="$TMP_ROOT/default-only.json"
 EMPTY_RULES="$TMP_ROOT/empty-rules.json"
@@ -390,7 +423,7 @@ for direct_rules in "$DEFAULT_ONLY" "$EMPTY_RULES"; do
   assert_contains "$out" '  reason: no rules to match' "no-rule resolution returns control to firstmate: $direct_rules"
   assert_not_contains "$out" '  profile:' "no-rule resolution emits no profile: $direct_rules"
   assert_absent "$LOG/argv" "no-rule resolution never calls curl: $direct_rules"
-  assert_absent "$LOG/quota-axi.calls" "no-rule resolution never reads quota: $direct_rules"
+  assert_absent "$LOG/aub.calls" "no-rule resolution never reads quota: $direct_rules"
 done
 
 AGY_RULE="$TMP_ROOT/agy-rule.json"
@@ -401,16 +434,19 @@ cat > "$RESPONSE" <<'JSON'
 JSON
 reset_log
 TYPESAFE_API_KEY=$KEY run code out err "$BRIEF"
-assert_contains "$out" 'candidate: agy:-  provider=agy  scope=all_models  remaining=64%  spendPriority=0.4  runway=through_reset  -> eligible' "agy uses its resolver-only authoritative quota provider"
+assert_contains "$out" 'candidate: agy:-  account=agy  freshness=fresh  scope=account_wide  remaining=64%  burn=0  elapsed=50%  reserve=64  -> eligible' "agy is measured on its one default account"
+assert_contains "$out" '  account: agy' "the default account is named"
 assert_contains "$out" "  profile: --harness 'agy'" "provider-less agy rule resolves"
+assert_not_contains "$out" '--account' "a default account is measured only, never passed to fm-spawn.sh"
 
 GEMINI_RULE="$TMP_ROOT/gemini-rule.json"
 printf '%s\n' '{"rules":[{"when":"Gemini work.","use":{"harness":"gemini","model":"gemini-3.8-flash-high","provider":"google"}}]}' > "$GEMINI_RULE"
 cp "$GEMINI_RULE" "$RULES"
 reset_log
 TYPESAFE_API_KEY=$KEY run code out err "$BRIEF"
-assert_contains "$out" 'candidate: gemini:gemini-3.8-flash-high  provider=google  scope=all_models  remaining=72%  spendPriority=0.3  runway=through_reset  -> eligible' "Gemini resolves through its explicit provider"
+assert_contains "$out" 'candidate: gemini:gemini-3.8-flash-high  account=google  freshness=fresh  scope=account_wide  remaining=72%' "Gemini is measured on its declared provider account"
 assert_contains "$out" "  profile: --harness 'gemini' --model 'gemini-3.8-flash-high'" "Gemini is a typed verified dispatch harness"
+assert_not_contains "$out" '--account' "a provider account is measured only"
 
 cp "$ROOT/docs/examples/crew-dispatch.json" "$RULES"
 cat > "$RESPONSE" <<'JSON'
@@ -419,7 +455,8 @@ JSON
 reset_log
 TYPESAFE_API_KEY=$KEY run code out err "$BRIEF"
 assert_contains "$out" '  status: clear' "the documented example passes opted-in resolution"
-assert_contains "$out" 'candidate: pi:anthropic/claude-sonnet-5  provider=claude' "the documented Pi default uses its declared Claude provider"
+assert_contains "$out" 'candidate: pi:anthropic/claude-sonnet-5  -> eligible, unranked: no account for harness pi' "the documented Pi default is unmeasured without a Pi account"
+assert_contains "$out" "  profile: --harness 'codex' --model 'gpt-5.5' --effort 'medium' --account 'codex-primary'" "the documented Codex default runs on its declared account"
 assert_not_contains "$err" 'malformed rules file' "the documented example reaches resolution"
 cp "$BASE_RULES" "$RULES"
 pass "no-rule fallback, Agy, Gemini, and documented configurations resolve"
@@ -431,9 +468,10 @@ TYPESAFE_API_KEY=$KEY run code out err "$BRIEF"
 expect_code 0 "$code" "ambiguous exits 0"
 assert_contains "$out" '  status: ambiguous' "below the floor is ambiguous"
 assert_contains "$out" '  reason: confidence 0.41 below floor 0.6' "ambiguous names the floor"
-assert_contains "$out" 'candidate: claude:sonnet  provider=claude  scope=all_models  remaining=79%  spendPriority=-0.4627  runway=projected_exhaustion  -> eligible' "ambiguous preserves matched candidate evidence"
-assert_contains "$out" 'candidate: kimi:kimi-code/k3  provider=kimi  -> eligible, unranked: provider kimi unmeasured (unknown): disclosed uncertainty' "ambiguous preserves eligible unranked candidate evidence"
+assert_contains "$out" 'candidate: claude:sonnet  account=gmail  freshness=fresh  scope=account_wide  remaining=95%' "ambiguous preserves matched candidate evidence"
+assert_contains "$out" 'candidate: kimi:kimi-code/k3  -> eligible, unranked: no account for harness kimi' "ambiguous preserves eligible unranked candidate evidence"
 assert_not_contains "$out" '  profile:' "ambiguous emits no profile line"
+assert_not_contains "$out" '  account:' "ambiguous names no chosen account"
 pass "ambiguous: confidence below the fixed floor hands the decision back"
 
 # --- per-rule confidence floor ------------------------------------------------
@@ -585,7 +623,7 @@ TYPESAFE_API_KEY=$KEY run code out err "$BRIEF"
 expect_code 0 "$code" "escalate exits 0"
 assert_contains "$out" '  status: escalate' "approval-gated rule escalates"
 assert_contains "$out" "  reason: rule requires the captain's explicit approval before dispatch" "escalate names the approval gate"
-assert_contains "$out" 'candidate: claude:fable  provider=claude  scope=model:fable  remaining=15%  spendPriority=-0.79  runway=projected_exhaustion  bounds=all_models:79%/projected_exhaustion,model:fable:15%/projected_exhaustion  -> eligible' "approval escalation preserves matched candidate evidence"
+assert_contains "$out" 'candidate: claude:fable  account=gmail  freshness=fresh  scope=account_wide  remaining=95%  burn=0.2  elapsed=10%  reserve=77  -> eligible' "approval escalation preserves matched candidate evidence"
 assert_not_contains "$out" '  profile:' "escalate emits no profile line"
 pass "escalate: a rule declared approval: captain never yields a profile"
 
@@ -595,120 +633,103 @@ write_response "$RESPONSE" rule_1 0.97
 TYPESAFE_API_KEY=$KEY run code out err "$BRIEF"
 assert_contains "$out" '  status: clear' "rule floor fall-through still resolves"
 assert_contains "$out" '  note: rule rule_1 floor model:fable below 20%: fall through to default' "rule floor fall-through is explained"
-assert_contains "$out" "  profile: --harness 'cursor' --model 'cursor-grok-4.6-high'" "fall-through resolves among the default profiles"
+assert_contains "$out" "  profile: --harness 'cursor' --model 'cursor-grok-4.6-high' --account 'cursor-main'" "fall-through resolves among the default profiles"
 assert_not_contains "$out" 'candidate: claude:fable' "the floored rule's own profile is not a candidate"
 
 MISSING_RULE_FLOOR="$TMP_ROOT/missing-rule-floor.json"
-jq '(.providers[] | select(.provider == "claude") | .quotaSemantics.effectiveAvailability) |= map(select(.scope != "model:fable"))' "$QUOTA" > "$MISSING_RULE_FLOOR"
-TYPESAFE_API_KEY=$KEY QUOTA_AXI_FIXTURE="$MISSING_RULE_FLOOR" run code out err "$BRIEF"
+with_account "$MISSING_RULE_FLOOR" '.windows |= map(select(.scope != "model"))' primary
+TYPESAFE_API_KEY=$KEY AUB_FIXTURE="$MISSING_RULE_FLOOR" run code out err "$BRIEF"
 assert_contains "$out" '  status: escalate' "an unverifiable rule floor escalates"
-assert_contains "$out" '  reason: rule rule_1 floor claude/model:fable is unverifiable' "the unverifiable rule floor names its provider and scope"
+assert_contains "$out" '  reason: rule rule_1 floor primary/model:fable is unverifiable' "the unverifiable rule floor names its account and scope"
 assert_not_contains "$out" '  profile:' "an unverifiable rule floor never authorizes default routing"
+
+AUTH_RULE_FLOOR="$TMP_ROOT/auth-rule-floor.json"
+with_account "$AUTH_RULE_FLOOR" '.freshness = "auth_required"' primary
+TYPESAFE_API_KEY=$KEY AUB_FIXTURE="$AUTH_RULE_FLOOR" run code out err "$BRIEF"
+assert_contains "$out" '  reason: rule rule_1 floor primary/model:fable is unverifiable' "an auth_required floor account is unverifiable"
 pass "rule floor: known shortfall falls through while unavailable evidence escalates"
 
-# --- declared provider and profile floor --------------------------------------
+# --- declared provider account and profile floor -------------------------------
 reset_log
 write_response "$RESPONSE" rule_2 0.99
 TYPESAFE_API_KEY=$KEY run code out err "$BRIEF"
-assert_contains "$out" 'candidate: pi:openai-codex/gpt-5.6-sol  provider=codex  scope=all_models  remaining=31%' "declared provider routes a Pi profile to the codex row"
-assert_contains "$out" 'candidate: codex:gpt-5.6-sol  provider=codex  scope=all_models  remaining=31%  spendPriority=-  runway=projected_exhaustion  -> not eligible: profile floor all_models below 50%' "profile floor makes a candidate ineligible with its reason"
+assert_contains "$out" 'candidate: pi:openai-codex/gpt-5.6-sol  account=codex-primary  freshness=fresh  scope=account_wide  remaining=31%' "a declared provider measures a Pi profile on that account"
+assert_contains "$out" 'candidate: codex:gpt-5.6-sol  account=codex-primary  freshness=fresh  scope=account_wide  remaining=31%  burn=1.0  elapsed=50%  reserve=-19  -> not eligible: profile floor account_wide below 50%' "profile floor makes a candidate ineligible with its reason"
 assert_contains "$out" "  profile: --harness 'pi' --model 'openai-codex/gpt-5.6-sol'" "the remaining eligible candidate wins"
-
-FLOOR_BOUNDS="$TMP_ROOT/floor-bounds.json"
-jq '(.providers[] | select(.provider == "codex") | .quotaSemantics.effectiveAvailability) += [
-  {"scope":"model:gpt-5.6-sol","status":"known","effectivePercentRemaining":10,"runway":{"status":"projected_exhaustion"},"selection":{"spendPriority":-0.9}}
-]' "$QUOTA" > "$FLOOR_BOUNDS"
-TYPESAFE_API_KEY=$KEY QUOTA_AXI_FIXTURE="$FLOOR_BOUNDS" run code out err "$BRIEF"
-assert_contains "$out" 'candidate: codex:gpt-5.6-sol  provider=codex  scope=all_models  remaining=31%  spendPriority=-  runway=projected_exhaustion  bounds=all_models:31%/projected_exhaustion,model:gpt-5.6-sol:10%/projected_exhaustion  -> not eligible: profile floor all_models below 50%' "a failed profile floor reports its named row while retaining all bounds"
-
-FLOOR_WITH_UNKNOWN="$TMP_ROOT/floor-with-unknown.json"
-jq '(.providers[] | select(.provider == "codex") | .quotaSemantics) |= (.status = "partial" | .effectiveAvailability += [
-  {"scope":"model:gpt-5.6-sol","status":"unknown","runway":{"status":"unknown"}}
-])' "$QUOTA" > "$FLOOR_WITH_UNKNOWN"
-TYPESAFE_API_KEY=$KEY QUOTA_AXI_FIXTURE="$FLOOR_WITH_UNKNOWN" run code out err "$BRIEF"
-assert_contains "$out" 'candidate: codex:gpt-5.6-sol  provider=codex  scope=all_models  remaining=31%  spendPriority=-  runway=projected_exhaustion  bounds=all_models:31%/projected_exhaustion,model:gpt-5.6-sol:-%/unknown  -> not eligible: profile floor all_models below 50%' "a known profile-floor shortfall wins over unrelated unknown model evidence"
+assert_not_contains "$out" '--account' "a provider account is measured only, never passed to fm-spawn.sh"
 
 MISSING_PROFILE_FLOOR_RULES="$TMP_ROOT/missing-profile-floor-rules.json"
 jq '.rules[1].use[1].floor.scope = "model:missing"' "$BASE_RULES" > "$MISSING_PROFILE_FLOOR_RULES"
 cp "$MISSING_PROFILE_FLOOR_RULES" "$RULES"
 TYPESAFE_API_KEY=$KEY run code out err "$BRIEF"
-assert_contains "$out" 'candidate: codex:gpt-5.6-sol  provider=codex  scope=model:missing  remaining=-%  spendPriority=-  runway=-  -> eligible, unranked: profile floor model:missing is unverifiable: not rankable: disclosed uncertainty' "a missing profile floor remains eligible but unranked"
+assert_contains "$out" 'candidate: codex:gpt-5.6-sol  account=codex-primary  freshness=fresh  scope=account_wide  remaining=31%  burn=1.0  elapsed=50%  reserve=-19  -> eligible, unranked: profile floor model:missing is unverifiable: not rankable: disclosed uncertainty' "a missing profile floor remains eligible but unranked"
 assert_not_contains "$out" 'profile floor model:missing below' "missing profile evidence is not described as a shortfall"
 assert_contains "$out" "  profile: --harness 'pi' --model 'openai-codex/gpt-5.6-sol'" "another candidate may clear without misrepresenting missing floor evidence"
 cp "$BASE_RULES" "$RULES"
-pass "declared provider and profile floor evidence are applied in code"
+pass "declared provider account and profile floor evidence are applied in code"
 
-# --- malformed ranking evidence is never ordered -------------------------------
+# --- freshness: stale accounts rank only when no fresh one is eligible ----------
 reset_log
-NONNUMERIC="$TMP_ROOT/nonnumeric-spend-priority.json"
-jq '(.providers[] | select(.provider == "cursor") | .quotaSemantics.effectiveAvailability[] | select(.scope == "all_models") | .selection.spendPriority) = "high"' "$QUOTA" > "$NONNUMERIC"
 write_response "$RESPONSE" rule_4 0.9
-TYPESAFE_API_KEY=$KEY QUOTA_AXI_FIXTURE="$NONNUMERIC" run code out err "$BRIEF"
-assert_contains "$out" 'candidate: cursor:cursor-grok-4.6-medium  provider=cursor  scope=all_models  remaining=91%  spendPriority=-  runway=through_reset  -> eligible, unranked: spendPriority missing or non-numeric at all_models: not rankable: disclosed uncertainty' "a nonnumeric spendPriority remains eligible but unranked"
-assert_contains "$out" "  profile: --harness 'claude' --model 'sonnet' --effort 'high'" "numeric evidence wins without mixed-type ordering"
-pass "nonnumeric spendPriority evidence is never ranked"
+STALE_CURSOR="$TMP_ROOT/stale-cursor.json"
+with_account "$STALE_CURSOR" '.freshness = "stale"' cursor-main
+TYPESAFE_API_KEY=$KEY AUB_FIXTURE="$STALE_CURSOR" run code out err "$BRIEF"
+assert_contains "$out" 'candidate: cursor:cursor-grok-4.6-medium  account=cursor-main  freshness=stale  scope=account_wide  remaining=91%  burn=0.1  elapsed=50%  reserve=86  -> eligible, stale: ranked only when no fresh account is eligible' "a stale account with the highest reserve is held back"
+assert_contains "$out" "  profile: --harness 'claude' --model 'sonnet' --effort 'high' --account 'gmail'" "the best fresh account wins over a stale one"
 
-# --- partial providers retain their known row evidence --------------------------
+ALL_STALE="$TMP_ROOT/all-stale.json"
+jq '.accounts[].freshness = "stale"' "$QUOTA" > "$ALL_STALE"
+TYPESAFE_API_KEY=$KEY AUB_FIXTURE="$ALL_STALE" run code out err "$BRIEF"
+assert_contains "$out" '  status: clear' "stale accounts rank when no fresh one is eligible"
+assert_contains "$out" '  note: account cursor-main is stale; ranked because no fresh account is eligible' "a stale choice is disclosed"
+assert_contains "$out" "  profile: --harness 'cursor' --model 'cursor-grok-4.6-medium' --account 'cursor-main'" "the stale account with the highest reserve wins"
+
+AUTH_CURSOR="$TMP_ROOT/auth-cursor.json"
+with_account "$AUTH_CURSOR" '.freshness = "auth_required" | .reason = "token_expired"' cursor-main
+TYPESAFE_API_KEY=$KEY AUB_FIXTURE="$AUTH_CURSOR" run code out err "$BRIEF"
+assert_contains "$out" 'candidate: cursor:cursor-grok-4.6-medium  account=cursor-main  freshness=auth_required  -> not eligible: auth_required (token_expired)' "an auth_required account is never eligible"
+assert_contains "$out" "  profile: --harness 'claude' --model 'sonnet' --effort 'high' --account 'gmail'" "the next account wins"
+pass "freshness: fresh first, stale only as a fallback, auth_required never"
+
+# --- remaining, untriggered windows, and absent accounts -----------------------
 reset_log
-PARTIAL="$TMP_ROOT/partial.json"
-jq '(.providers[] | select(.provider == "cursor") | .quotaSemantics.status) = "partial"' "$QUOTA" > "$PARTIAL"
-write_response "$RESPONSE" rule_4 0.9
-TYPESAFE_API_KEY=$KEY QUOTA_AXI_FIXTURE="$PARTIAL" run code out err "$BRIEF"
-assert_contains "$out" 'candidate: cursor:cursor-grok-4.6-medium  provider=cursor  scope=all_models  remaining=91%  spendPriority=0.7597  runway=through_reset  -> eligible' "a known row from a partial provider remains rankable"
-assert_contains "$out" "  profile: --harness 'cursor' --model 'cursor-grok-4.6-medium'" "partial provider evidence can win the argmax"
+EMPTY_CURSOR="$TMP_ROOT/empty-cursor.json"
+with_account "$EMPTY_CURSOR" '.windows[0].quota_used_ppm = 1000000' cursor-main
+TYPESAFE_API_KEY=$KEY AUB_FIXTURE="$EMPTY_CURSOR" run code out err "$BRIEF"
+assert_contains "$out" 'candidate: cursor:cursor-grok-4.6-medium  account=cursor-main  freshness=fresh  scope=account_wide  remaining=0%' "an empty limiting window is reported"
+assert_contains "$out" '-> not eligible: 0% remaining at account_wide' "an empty limiting window makes the account ineligible"
+assert_contains "$out" " --account 'gmail'" "an account with quota left wins"
 
-PARTIAL_UNKNOWN="$TMP_ROOT/partial-unknown.json"
-jq '(.providers[] | select(.provider == "cursor") | .quotaSemantics) |= (.status = "partial" | .effectiveAvailability += [
-  {"scope":"model:cursor-grok-4.6-medium","status":"unknown","runway":{"status":"unknown"}}
-])' "$QUOTA" > "$PARTIAL_UNKNOWN"
-TYPESAFE_API_KEY=$KEY QUOTA_AXI_FIXTURE="$PARTIAL_UNKNOWN" run code out err "$BRIEF"
-assert_contains "$out" 'candidate: cursor:cursor-grok-4.6-medium  provider=cursor  scope=model:cursor-grok-4.6-medium  remaining=-%  spendPriority=-  runway=-  bounds=all_models:91%/through_reset,model:cursor-grok-4.6-medium:-%/unknown  -> eligible, unranked: quota row model:cursor-grok-4.6-medium unknown: not rankable: disclosed uncertainty' "an unknown exact-model row preserves partial known evidence without ranking"
-assert_contains "$out" '  note: 2 eligible candidate(s) unranked (cursor, kimi)' "clear result lists every provider with unranked uncertainty"
-assert_contains "$out" "  profile: --harness 'claude' --model 'sonnet' --effort 'high'" "another measured candidate can clear"
+UNTRIGGERED="$TMP_ROOT/untriggered.json"
+with_account "$UNTRIGGERED" '.windows[0].quota_used_ppm = 0 | .windows[0].resets_at_nanos = null | .windows[0].burn_rate = null | .limiting_window.burn_rate = null' primary
+TYPESAFE_API_KEY=$KEY AUB_FIXTURE="$UNTRIGGERED" run code out err "$BRIEF"
+assert_contains "$out" 'candidate: claude:sonnet  account=primary  freshness=fresh  scope=account_wide  remaining=100%  burn=0  elapsed=0%  reserve=100  -> eligible' "an untriggered window counts as fully available"
+assert_contains "$out" "  profile: --harness 'claude' --model 'sonnet' --effort 'high' --account 'primary'" "the untriggered account wins"
 
-PARTIAL_EXHAUSTED="$TMP_ROOT/partial-exhausted.json"
-jq '(.providers[] | select(.provider == "cursor") | .quotaSemantics) |= (.status = "partial" | .effectiveAvailability += [
-  {"scope":"model:cursor-grok-4.6-medium","status":"unknown","runway":{"status":"unknown"}}
-] | .effectiveAvailability[] |= if .scope == "all_models" then .effectivePercentRemaining = 0 | .runway.status = "exhausted_now" else . end)' "$QUOTA" > "$PARTIAL_EXHAUSTED"
-TYPESAFE_API_KEY=$KEY QUOTA_AXI_FIXTURE="$PARTIAL_EXHAUSTED" run code out err "$BRIEF"
-assert_contains "$out" 'candidate: cursor:cursor-grok-4.6-medium  provider=cursor  scope=all_models  remaining=0%  spendPriority=-  runway=exhausted_now  bounds=all_models:0%/exhausted_now,model:cursor-grok-4.6-medium:-%/unknown  -> not eligible: runway exhausted_now at all_models' "known exhaustion vetoes a candidate despite unknown exact-model evidence"
-assert_contains "$out" '  note: 1 eligible candidate(s) unranked (kimi)' "an exhausted candidate is excluded from the unranked uncertainty note"
+GHOST_RULES="$TMP_ROOT/ghost-rules.json"
+jq '.rules[3].use += [{"harness": "claude", "model": "sonnet", "effort": "high", "account": "ghost"}]' "$BASE_RULES" > "$GHOST_RULES"
+cp "$GHOST_RULES" "$RULES"
+TYPESAFE_API_KEY=$KEY run code out err "$BRIEF"
+assert_contains "$out" 'candidate: claude:sonnet  account=ghost  -> eligible, unranked: account ghost not in the aub snapshot: disclosed uncertainty' "an account the snapshot does not list stays eligible but unranked"
+assert_contains "$out" '  note: 2 eligible candidate(s) unranked (ghost, kimi)' "the unranked note names the account"
+assert_contains "$out" " --account 'cursor-main'" "measured accounts still rank"
+cp "$BASE_RULES" "$RULES"
+pass "remaining, untriggered windows, and absent accounts follow the ranking rule"
 
-UNKNOWN_EXHAUSTED="$TMP_ROOT/unknown-exhausted.json"
-jq '(.providers[] | select(.provider == "cursor") | .quotaSemantics) = {
-  "status":"unknown","effectiveAvailability":[
-    {"scope":"all_models","status":"unknown","runway":{"status":"exhausted_now"}}
-  ]
-}' "$QUOTA" > "$UNKNOWN_EXHAUSTED"
-TYPESAFE_API_KEY=$KEY QUOTA_AXI_FIXTURE="$UNKNOWN_EXHAUSTED" run code out err "$BRIEF"
-assert_contains "$out" 'candidate: cursor:cursor-grok-4.6-medium  provider=cursor  scope=all_models  remaining=-%  spendPriority=-  runway=exhausted_now  -> not eligible: runway exhausted_now at all_models' "unknown provider semantics cannot mask concrete exhaustion"
-
-NO_APPLICABLE="$TMP_ROOT/no-applicable.json"
-jq '(.providers[] | select(.provider == "cursor") | .quotaSemantics.effectiveAvailability) = [
-  {"scope":"model:other","status":"known","effectivePercentRemaining":91,"runway":{"status":"through_reset"},"selection":{"spendPriority":0.8}}
-]' "$QUOTA" > "$NO_APPLICABLE"
-TYPESAFE_API_KEY=$KEY QUOTA_AXI_FIXTURE="$NO_APPLICABLE" run code out err "$BRIEF"
-assert_contains "$out" 'candidate: cursor:cursor-grok-4.6-medium  provider=cursor  -> eligible, unranked: no applicable quota row for provider cursor: disclosed uncertainty' "a candidate without an applicable row remains eligible but unranked"
-assert_contains "$out" '  note: 2 eligible candidate(s) unranked (cursor, kimi)' "no-applicable-row uncertainty appears in the clear-result note"
-pass "partial and missing quota evidence remain eligible but unranked"
-
-# --- provider-wide rows remain bounds beside exact model rows ------------------
+# --- profiles that differ only by account are distinct candidates --------------
 reset_log
-BOUNDED="$TMP_ROOT/bounded.json"
-jq '(.providers[] | select(.provider == "claude") | .quotaSemantics.effectiveAvailability) += [
-  {"scope":"model:sonnet","status":"known","effectivePercentRemaining":99,"runway":{"status":"through_reset"},"selection":{"spendPriority":0.9}}
-]' "$QUOTA" > "$BOUNDED"
-write_response "$RESPONSE" rule_4 0.9
-TYPESAFE_API_KEY=$KEY QUOTA_AXI_FIXTURE="$BOUNDED" run code out err "$BRIEF"
-assert_contains "$out" 'candidate: claude:sonnet  provider=claude  scope=all_models  remaining=79%  spendPriority=-0.4627' "the limiting provider-wide row drives ranking"
-assert_contains "$out" 'bounds=all_models:79%/projected_exhaustion,model:sonnet:99%/through_reset' "all applicable quota bounds are disclosed"
-
-EXHAUSTED_WIDE="$TMP_ROOT/exhausted-wide.json"
-jq '(.providers[] | select(.provider == "claude") | .quotaSemantics.effectiveAvailability[] | select(.scope == "all_models")) |= (.effectivePercentRemaining = 0 | .runway.status = "exhausted_now")' "$BOUNDED" > "$EXHAUSTED_WIDE"
-TYPESAFE_API_KEY=$KEY QUOTA_AXI_FIXTURE="$EXHAUSTED_WIDE" run code out err "$BRIEF"
-assert_contains "$out" 'candidate: claude:sonnet  provider=claude  scope=all_models  remaining=0%' "the exhausted account-wide bound is the candidate evidence"
-assert_contains "$out" '-> not eligible: runway exhausted_now at all_models' "a healthy exact row cannot bypass an exhausted account-wide bound"
-pass "provider-wide and exact quota rows combine into one limiting candidate"
+PINNED_RULES="$TMP_ROOT/pinned-rules.json"
+printf '%s\n' '{"rules":[{"when":"Pinned.","use":[{"harness":"claude","model":"opus","account":"primary"},{"harness":"claude","model":"opus","account":"gmail"}]}]}' > "$PINNED_RULES"
+cp "$PINNED_RULES" "$RULES"
+cat > "$RESPONSE" <<'JSON'
+{"model":"jev-1.13.0","answers":{"rule":{"type":"choice","choice":"rule_1","confidence":0.99,"probabilities":{"rule_1":0.99,"default":0.01}}},"usage":{"input_tokens":100,"output_tokens":60}}
+JSON
+TYPESAFE_API_KEY=$KEY run code out err "$BRIEF"
+expect_code 0 "$code" "profiles that differ only by account are valid"
+assert_equals '2' "$(grep -c '^  candidate: claude:opus' <<<"$out")" "each pinned account is one candidate"
+assert_contains "$out" "  profile: --harness 'claude' --model 'opus' --account 'gmail'" "the pinned account with the higher reserve wins"
+cp "$BASE_RULES" "$RULES"
+pass "profiles that differ only by account are distinct candidates"
 
 # --- default choice ------------------------------------------------------------
 reset_log
@@ -716,169 +737,64 @@ write_response "$RESPONSE" default 0.88
 TYPESAFE_API_KEY=$KEY run code out err "$BRIEF"
 assert_contains "$out" '  rule: default (No listed rule applies to this task.)' "default names the fixed neutral none option"
 assert_contains "$out" '  note: no rule matched' "default is explained"
-assert_contains "$out" "  profile: --harness 'cursor' --model 'cursor-grok-4.6-high'" "default resolves by argmax"
+assert_contains "$out" "  profile: --harness 'cursor' --model 'cursor-grok-4.6-high' --account 'cursor-main'" "default resolves by the ranking rule"
 pass "default: no rule matched resolves among the default profiles"
 
 # --- genuine tie escalates ---------------------------------------------------------
 reset_log
 TIE="$TMP_ROOT/tie.json"
-write_quota "$TIE" 0.5 0.5
-write_response "$RESPONSE" default 0.88
-TYPESAFE_API_KEY=$KEY QUOTA_AXI_FIXTURE="$TIE" run code out err "$BRIEF"
+jq --argjson c "$(aub_account cursor-main fresh 95 0.2 0.1)" '(.accounts[] | select(.account == "cursor-main")) = $c' "$QUOTA" > "$TIE"
+TYPESAFE_API_KEY=$KEY AUB_FIXTURE="$TIE" run code out err "$BRIEF"
 assert_contains "$out" '  status: escalate' "tie escalates"
-assert_contains "$out" '  reason: genuine spendPriority tie' "tie is named"
-pass "tie: equal spendPriority never breaks by array order"
+assert_contains "$out" '  reason: genuine reserve tie' "tie is named"
+jq '(.accounts[] | select(.account == "gmail") | .observation_age_nanos) = 1' "$TIE" > "$TMP_ROOT/tie-fresher.json"
+TYPESAFE_API_KEY=$KEY AUB_FIXTURE="$TMP_ROOT/tie-fresher.json" run code out err "$BRIEF"
+assert_contains "$out" " --account 'gmail'" "an equal reserve and remaining falls to the fresher observation"
+pass "tie: equal evidence never breaks by array order"
 
-# --- nothing rankable escalates -------------------------------------------------
+# --- nothing rankable escalates, and all-auth is an error -------------------------
 reset_log
 NONE="$TMP_ROOT/none.json"
-jq '.providers |= map(if .provider == "cursor" or .provider == "claude" then .quotaSemantics.effectiveAvailability |= map(.runway.status = "exhausted_now") else . end)' "$QUOTA" > "$NONE"
-TYPESAFE_API_KEY=$KEY QUOTA_AXI_FIXTURE="$NONE" run code out err "$BRIEF"
+jq '(.accounts[] | select(.account != "agy" and .account != "google") | .windows[0].quota_used_ppm) = 1000000' "$QUOTA" > "$NONE"
+TYPESAFE_API_KEY=$KEY AUB_FIXTURE="$NONE" run code out err "$BRIEF"
 assert_contains "$out" '  status: escalate' "no rankable candidate escalates"
 assert_contains "$out" '  reason: no rankable eligible candidate' "no-candidate reason"
-assert_contains "$out" '-> not eligible: runway exhausted_now' "exhausted candidates keep their reason"
-pass "no rankable candidate: the tool escalates instead of guessing"
+assert_contains "$out" '-> not eligible: 0% remaining' "empty candidates keep their reason"
 
-# --- schema 6: rows keyed by provider + accountKey bind per account ----------------
-# quota-axi emits schema 6 once a provider expands to several accounts; every
-# row then carries accountKey and one provider id may appear on several rows.
-# Native Codex and Pi lanes bind to their own account rows, with no row
-# chosen by position or summed across accounts.
-LANE_RULES="$TMP_ROOT/lane-rules.json"
-SCHEMA6="$TMP_ROOT/schema6.json"
-SCHEMA5_PAIR="$TMP_ROOT/schema5-pair.json"
-cat > "$LANE_RULES" <<'JSON'
-{
-  "rules": [
-    {
-      "when": "Codex work.",
-      "use": [
-        { "harness": "pi", "model": "openai-codex-work/gpt-5.6-terra", "provider": "codex" },
-        { "harness": "pi", "model": "openai-codex/gpt-5.6-sol", "provider": "codex" },
-        { "harness": "codex", "model": "gpt-5.6-sol" }
-      ]
-    }
-  ]
-}
-JSON
-cat > "$SCHEMA6" <<'JSON'
-{
-  "generatedAt": "2030-01-01T00:00:00Z",
-  "schemaVersion": 6,
-  "providers": [
-    { "provider": "claude", "accountKey": "default", "quotaSemantics": { "status": "unknown", "effectiveAvailability": [] } },
-    { "provider": "codex", "accountKey": "openai-codex", "quotaSemantics": { "status": "known", "effectiveAvailability": [
-      { "scope": "all_models", "status": "known", "effectivePercentRemaining": 0, "runway": { "status": "exhausted_now" }, "selection": { "spendPriority": -1.4788 } } ] } },
-    { "provider": "codex", "accountKey": "openai-codex-work", "quotaSemantics": { "status": "known", "effectiveAvailability": [
-      { "scope": "all_models", "status": "known", "effectivePercentRemaining": 11, "runway": { "status": "projected_exhaustion" }, "selection": { "spendPriority": -5.6819 } } ] } },
-    { "provider": "cursor", "accountKey": "default", "quotaSemantics": { "status": "known", "effectiveAvailability": [
-      { "scope": "all_models", "status": "known", "effectivePercentRemaining": 24, "runway": { "status": "projected_exhaustion" }, "selection": { "spendPriority": 0.3917 } } ] } }
-  ]
-}
-JSON
-cat > "$RESPONSE" <<'JSON'
-{ "model": "jev-1.13.0",
-  "answers": { "rule": { "type": "choice", "choice": "rule_1", "confidence": 0.9,
-    "probabilities": { "rule_1": 0.97, "default": 0.03 } } },
-  "usage": { "input_tokens": 812, "output_tokens": 60 } }
-JSON
-cp "$LANE_RULES" "$RULES"
-reset_log
-TYPESAFE_API_KEY=$KEY QUOTA_AXI_FIXTURE="$SCHEMA6" run code out err "$BRIEF"
-expect_code 0 "$code" "schema 6 snapshot exits 0"
-assert_contains "$out" '  status: clear' "schema 6 snapshot resolves"
-assert_contains "$out" 'candidate: pi:openai-codex-work/gpt-5.6-terra  provider=codex  scope=all_models  remaining=11%  spendPriority=-5.6819  runway=projected_exhaustion  -> eligible' "a Pi lane binds to its own account row"
-assert_contains "$out" 'candidate: pi:openai-codex/gpt-5.6-sol  provider=codex  scope=all_models  remaining=0%  spendPriority=-  runway=exhausted_now  -> not eligible: runway exhausted_now at all_models' "the sibling lane reads its own exhausted row"
-assert_contains "$out" 'candidate: codex:gpt-5.6-sol  provider=codex  -> eligible, unranked: provider codex has no quota row for account codex-home: disclosed uncertainty' "native Codex never infers an account from a Pi lane"
-assert_contains "$out" "  profile: --harness 'pi' --model 'openai-codex-work/gpt-5.6-terra'" "the lane with headroom is chosen"
-assert_equals '--json' "$(cat "$LOG/quota-axi.calls")" "schema 6 needs one quota-axi --json read"
-
-SCHEMA6_NATIVE="$TMP_ROOT/schema6-native.json"
-jq '
-  .providers |= map(if .provider == "codex" then
-    .quotaSemantics.effectiveAvailability |= map(.effectivePercentRemaining = 0 | .runway.status = "exhausted_now")
-    else . end) |
-  (.providers[] | select(.accountKey == "openai-codex-work")) as $account |
-  .providers += [($account | .accountKey = "default"),
-    ($account | .accountKey = "codex-home" |
-      .quotaSemantics.effectiveAvailability |= map(
-        .effectivePercentRemaining = 80 | .runway.status = "through_reset" | .selection.spendPriority = 0.8))]
-' "$SCHEMA6" > "$SCHEMA6_NATIVE"
-reset_log
-TYPESAFE_API_KEY=$KEY QUOTA_AXI_FIXTURE="$SCHEMA6_NATIVE" run code out err "$BRIEF"
-expect_code 0 "$code" "native Codex schema 6 snapshot exits 0"
-assert_contains "$out" '  status: clear' "native Codex headroom resolves despite exhausted Pi and default rows"
-assert_contains "$out" 'candidate: codex:gpt-5.6-sol  provider=codex  scope=all_models  remaining=80%  spendPriority=0.8  runway=through_reset  -> eligible' "native Codex reads codex-home"
-assert_contains "$out" "  profile: --harness 'codex' --model 'gpt-5.6-sol'" "native Codex headroom is chosen"
-
-jq '.providers |= reverse' "$SCHEMA6_NATIVE" > "$TMP_ROOT/schema6-reversed.json"
-reset_log
-TYPESAFE_API_KEY=$KEY QUOTA_AXI_FIXTURE="$TMP_ROOT/schema6-reversed.json" run code out err "$BRIEF"
-assert_contains "$out" "  profile: --harness 'codex' --model 'gpt-5.6-sol'" "native Codex selection ignores row order"
-
-jq '.providers |= map(select(.provider != "codex" or .accountKey != "default") |
-  if .accountKey == "codex-home" then .accountKey = "default" else . end)' "$SCHEMA6_NATIVE" > "$TMP_ROOT/schema6-default.json"
-reset_log
-TYPESAFE_API_KEY=$KEY QUOTA_AXI_FIXTURE="$TMP_ROOT/schema6-default.json" run code out err "$BRIEF"
-assert_contains "$out" "  profile: --harness 'codex' --model 'gpt-5.6-sol'" "native Codex falls back to the default row when codex-home is absent"
-pass "native Codex binds to codex-home before default, independently of Pi accounts and row order"
-
-jq '.schemaVersion = 5 | .providers |= map(select(.accountKey != "openai-codex")) | del(.providers[].accountKey)' "$SCHEMA6" > "$SCHEMA5_PAIR"
-reset_log
-TYPESAFE_API_KEY=$KEY QUOTA_AXI_FIXTURE="$SCHEMA5_PAIR" run code out err "$BRIEF"
-assert_contains "$out" '  status: escalate' "schema 5 keeps joining by provider alone"
-assert_contains "$out" '  reason: genuine spendPriority tie' "every codex profile reads the one schema 5 codex row"
-assert_contains "$out" 'candidate: codex:gpt-5.6-sol  provider=codex  scope=all_models  remaining=11%  spendPriority=-5.6819  runway=projected_exhaustion  -> eligible' "a schema 5 row never needs accountKey"
-
-SCHEMA6_PI_NATIVE="$TMP_ROOT/schema6-pi-native.json"
-jq '.providers |= map(select(.provider != "codex" or .accountKey != "default"))' "$SCHEMA6_NATIVE" > "$SCHEMA6_PI_NATIVE"
-for harness in pi pi-signed; do
-  jq --arg harness "$harness" '.rules[0].use |= map(if .harness == "codex" then
-    {harness: $harness, model: "codex-native/gpt-6-astra", provider: "codex", effort: "ultra"}
-    else . end)' "$LANE_RULES" > "$RULES"
-  reset_log
-  TYPESAFE_API_KEY=$KEY QUOTA_AXI_FIXTURE="$SCHEMA6_PI_NATIVE" run code out err "$BRIEF"
-  expect_code 0 "$code" "$harness native adapter schema 6 exits 0"
-  assert_contains "$out" '  status: clear' "$harness native adapter resolves with codex-home and no default row"
-  assert_contains "$out" "candidate: $harness:codex-native/gpt-6-astra  provider=codex  scope=all_models  remaining=80%  spendPriority=0.8  runway=through_reset  -> eligible" "$harness native adapter reads codex-home"
-  assert_contains "$out" "  profile: --harness '$harness' --model 'codex-native/gpt-6-astra' --effort 'ultra'" "$harness native adapter is chosen over exhausted Pi accounts"
-
-  reset_log
-  TYPESAFE_API_KEY=$KEY QUOTA_AXI_FIXTURE="$TMP_ROOT/schema6-default.json" run code out err "$BRIEF"
-  assert_contains "$out" "  profile: --harness '$harness' --model 'codex-native/gpt-6-astra' --effort 'ultra'" "$harness native adapter falls back to default"
-
-  reset_log
-  TYPESAFE_API_KEY=$KEY QUOTA_AXI_FIXTURE="$SCHEMA6" run code out err "$BRIEF"
-  assert_contains "$out" "candidate: $harness:codex-native/gpt-6-astra  provider=codex  -> eligible, unranked: provider codex has no quota row for account codex-home: disclosed uncertainty" "$harness native adapter never borrows a Pi account"
-
-  reset_log
-  TYPESAFE_API_KEY=$KEY QUOTA_AXI_FIXTURE="$SCHEMA5_PAIR" run code out err "$BRIEF"
-  assert_contains "$out" "candidate: $harness:codex-native/gpt-6-astra  provider=codex  scope=all_models  remaining=11%  spendPriority=-5.6819  runway=projected_exhaustion  -> eligible" "$harness native adapter still joins schema 5 by provider alone"
-done
-cp "$LANE_RULES" "$RULES"
-pass "Pi native adapters bind to codex-home with existing fallbacks and schema 5 compatibility"
-
-jq 'del(.providers[1].accountKey)' "$SCHEMA6" > "$TMP_ROOT/schema6-keyless.json"
-reset_log
-TYPESAFE_API_KEY=$KEY QUOTA_AXI_FIXTURE="$TMP_ROOT/schema6-keyless.json" run code out err "$BRIEF"
-assert_contains "$out" '  status: error' "a schema 6 row without accountKey is an error outcome"
-assert_contains "$out" '  reason: quota-axi --json returned an invalid snapshot' "keyless schema 6 row is named as an invalid snapshot"
+ALL_AUTH_RULES="$TMP_ROOT/all-auth-rules.json"
+jq '.default = [{"harness": "claude", "model": "opus"}]' "$BASE_RULES" > "$ALL_AUTH_RULES"
+cp "$ALL_AUTH_RULES" "$RULES"
+write_response "$RESPONSE" default 0.88
+jq '.accounts[].freshness = "auth_required"' "$QUOTA" > "$TMP_ROOT/all-auth.json"
+TYPESAFE_API_KEY=$KEY AUB_FIXTURE="$TMP_ROOT/all-auth.json" run code out err "$BRIEF"
+expect_code 0 "$code" "every account needing authentication exits 0"
+assert_contains "$out" '  status: error' "every candidate account needing authentication is an error"
+assert_contains "$out" '  reason: every candidate account needs authentication in aub: gmail, primary' "the accounts needing a login are named"
+assert_not_contains "$out" '  profile:' "an all-auth result emits no profile"
 cp "$BASE_RULES" "$RULES"
-pass "schema 6: each candidate binds to its account row; schema 5 is unchanged"
+pass "no rankable candidate escalates, and all-auth candidates are an error"
 
-# --- quota-axi is read exactly once --------------------------------------------
+# --- aub is read exactly once --------------------------------------------------
 reset_log
 write_response "$RESPONSE" rule_4 0.9
 TYPESAFE_API_KEY=$KEY run code out err "$BRIEF"
-expect_code 0 "$code" "quota-axi path exits 0"
-assert_equals '--json' "$(cat "$LOG/quota-axi.calls")" "quota-axi --json is called exactly once"
-assert_contains "$out" "  profile: --harness 'cursor' --model 'cursor-grok-4.6-medium'" "quota-axi snapshot drives the argmax"
+expect_code 0 "$code" "aub path exits 0"
+assert_equals 'status --format json' "$(cat "$LOG/aub.calls")" "aub status --format json is called exactly once"
 reset_log
 TYPESAFE_API_KEY=$KEY FAKE_QUOTA_FAIL=1 run code out err "$BRIEF"
-expect_code 0 "$code" "quota-axi failure exits 0"
-assert_contains "$out" '  status: error' "quota-axi failure is an error outcome"
-assert_contains "$out" '  reason: quota-axi --json failed' "quota-axi failure is named"
-pass "quota evidence comes from one quota-axi --json read, and its failure is an error outcome"
+expect_code 0 "$code" "aub failure exits 0"
+assert_contains "$out" '  status: error' "aub failure is an error outcome"
+assert_contains "$out" '  reason: aub status --format json failed or returned an invalid snapshot' "aub failure is named"
+reset_log
+jq '.schema = 4' "$QUOTA" > "$TMP_ROOT/schema4.json"
+TYPESAFE_API_KEY=$KEY AUB_FIXTURE="$TMP_ROOT/schema4.json" run code out err "$BRIEF"
+assert_contains "$out" '  reason: aub status --format json failed or returned an invalid snapshot' "a schema other than 5 is an invalid snapshot"
+reset_log
+mv "$FAKEBIN/aub" "$TMP_ROOT/aub.hidden"
+TYPESAFE_API_KEY=$KEY RUN_PATH="$FAKEBIN:$(fm_test_base_path_sans "$BASE_PATH" aub)" run code out err "$BRIEF"
+mv "$TMP_ROOT/aub.hidden" "$FAKEBIN/aub"
+assert_contains "$out" '  reason: aub not installed' "a missing aub is named"
+pass "quota evidence comes from one aub status read, and its failure is an error outcome"
 
 # --- API and response failures are error outcomes, exit 0 ----------------------
 reset_log
@@ -970,17 +886,16 @@ for bad in \
   '{"rules":[{"when":"x","use":{"harness":"claude"},"min_confidence":1.5}]}|min_confidence must be a number from 0 through 1 when present' \
   '{"rules":[{"when":"x","use":{"harness":"claude"},"floor":{"scope":"model:fable","min_percent":20}}]}|rule floor needs scope, min_percent 0..100, and provider matching ^[a-z0-9]+(-[a-z0-9]+)*\z' \
   '{"rules":[{"when":"x","use":{"harness":"claude"},"floor":{"scope":"model:fable","min_percent":20,"provider":"CLAUDE"}}]}|rule floor needs scope, min_percent 0..100, and provider matching ^[a-z0-9]+(-[a-z0-9]+)*\z' \
-  '{"rules":[{"when":"x","use":{"harness":"claude","provider":""}}]}|each use profile needs harness; model, effort, and floor must be well formed, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\z when present' \
-  '{"rules":[{"when":"x","use":{"harness":"claude","provider":" claude"}}]}|each use profile needs harness; model, effort, and floor must be well formed, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\z when present' \
-  '{"rules":[{"when":"x","use":{"harness":"claude","provider":"claude\n"}}]}|each use profile needs harness; model, effort, and floor must be well formed, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\z when present' \
-  '{"rules":[{"when":"x","use":{"harness":"codex","floor":{"scope":"all_models","min_percent":20,"provider":"claude"}}}]}|each use profile needs harness; model, effort, and floor must be well formed, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\z when present' \
-  '{"rules":[{"when":"x","use":[{"harness":"codex","model":"gpt-5.5","effort":"high"},{"harness":"codex","model":"gpt-5.5","effort":"high"}]}]}|each rule use must not contain duplicate harness, model, and effort profiles' \
-  '{"rules":[{"when":"x","use":{"harness":"codex"}}],"default":[{"harness":"claude","model":"opus"},{"harness":"claude","model":"opus"}]}|default must not contain duplicate harness, model, and effort profiles' \
+  '{"rules":[{"when":"x","use":{"harness":"claude","provider":""}}]}|each use profile needs harness; model, effort, account, and floor must be well formed, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\z when present' \
+  '{"rules":[{"when":"x","use":{"harness":"claude","provider":" claude"}}]}|each use profile needs harness; model, effort, account, and floor must be well formed, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\z when present' \
+  '{"rules":[{"when":"x","use":{"harness":"claude","provider":"claude\n"}}]}|each use profile needs harness; model, effort, account, and floor must be well formed, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\z when present' \
+  '{"rules":[{"when":"x","use":{"harness":"codex","floor":{"scope":"all_models","min_percent":20,"provider":"claude"}}}]}|each use profile needs harness; model, effort, account, and floor must be well formed, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\z when present' \
+  '{"rules":[{"when":"x","use":[{"harness":"codex","model":"gpt-5.5","effort":"high"},{"harness":"codex","model":"gpt-5.5","effort":"high"}]}]}|each rule use must not contain duplicate harness, model, effort, and account profiles' \
+  '{"rules":[{"when":"x","use":{"harness":"codex"}}],"default":[{"harness":"claude","model":"opus"},{"harness":"claude","model":"opus"}]}|default must not contain duplicate harness, model, effort, and account profiles' \
   '{"rules":[{"when":"x","use":{"harness":"spaceship"}}]}|each use profile must name a verified harness' \
   '{"rules":[{"when":"x","use":{"harness":"grok","effort":"max"}}]}|each use profile effort must be supported by its harness and model' \
-  '{"rules":[{"when":"x","use":{"harness":"opencode","model":"anthropic/claude-sonnet-4-5"}}]}|use profiles whose harness lacks one authoritative provider family require provider: opencode' \
-  '{"rules":[{"when":"x","use":{"harness":"rovo"}}]}|use profiles whose harness lacks one authoritative provider family require provider: rovo' \
-  '{"rules":[{"when":"x","use":{"harness":"codex"}}],"default":{"harness":"pi","model":"anthropic/claude-sonnet-5"}}|default profiles whose harness lacks one authoritative provider family require provider: pi'; do
+  '{"rules":[{"when":"x","use":{"harness":"claude","account":""}}]}|each use profile needs harness; model, effort, account, and floor must be well formed, and provider must match ^[a-z0-9]+(-[a-z0-9]+)*\z when present' \
+  '{"rules":[{"when":"x","use":[{"harness":"claude","account":"gmail"},{"harness":"claude","account":"gmail"}]}]}|each rule use must not contain duplicate harness, model, effort, and account profiles'; do
   printf '%s\n' "${bad%%|*}" > "$RULES"
   TYPESAFE_API_KEY=$KEY run code out err "$BRIEF"
   expect_code 2 "$code" "malformed rules exit 2: ${bad#*|}"

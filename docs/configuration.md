@@ -1062,9 +1062,9 @@ This section is the single owner of the canonical schema and its per-field seman
       "when": "<natural-language condition describing a kind of task>",
       "approval": "captain",
       "min_confidence": 0.85,
-      "floor": { "scope": "<quota-axi scope>", "min_percent": 20, "provider": "<quota-axi provider>" },
+      "floor": { "scope": "<aub window scope>", "min_percent": 20, "provider": "<aub account id>" },
       "use": [
-        { "harness": "<adapter>", "model": "<optional model>", "effort": "<low|medium|high|xhigh|max|ultra, optional>", "provider": "<optional quota-axi provider>", "account": "<optional config/accounts name>", "floor": { "scope": "<quota-axi scope>", "min_percent": 50 } }
+        { "harness": "<adapter>", "model": "<optional model>", "effort": "<low|medium|high|xhigh|max|ultra, optional>", "provider": "<optional aub account id>", "account": "<optional config/accounts name>", "floor": { "scope": "<aub window scope>", "min_percent": 50 } }
       ],
       "why": "<optional rationale that helps firstmate choose>"
     }
@@ -1099,24 +1099,19 @@ Set it high when a wrong pick is costly and low when the rule is a safe runner-u
 
 **Rule quota floors**
 
-- A rule `floor` names the quota-axi `provider` and `scope` whose `effectivePercentRemaining` must be at least `min_percent` for the rule's profiles to apply.
-- A provider-only rule floor on an expanded provider binds to its `default` account row.
-- An absent or unknown row or unmeasured provider makes the floor unverifiable and escalates without authorizing default routing.
+- A rule `floor` names, as `provider`, the aub account whose windows it reads, and a `scope`; every window of that account with that scope label must have at least `min_percent` remaining for the rule's profiles to apply.
+- A scope label is `account_wide`, `model:<model>`, or `group:<group>`, the labels `aub status` prints in `included_scopes`.
+- An account absent from the snapshot, an `auth_required` account, or no window with that scope makes the floor unverifiable and escalates without authorizing default routing.
 - A known percentage below the floor makes the tool resolve among `default` profiles instead.
 
-**Provider identifiers and mappings**
+**Accounts a profile runs on**
 
-A profile `provider` optionally names the quota-axi provider family whose rows apply to that profile; when present, profile and rule-floor provider IDs must match the strict whole-string pattern `^[a-z0-9]+(-[a-z0-9]+)*\z`.
+The resolver expands every profile into one candidate per account: the profile's `account` when present, otherwise its `provider` read as one aub account id that is measured but not passed to `fm-spawn.sh`, otherwise every [`config/accounts`](#named-worker-accounts-configaccounts) account of the profile's harness, otherwise the harness's one default account in [`bin/fm-quota-lib.sh`](../bin/fm-quota-lib.sh) (`agy` for `agy`, `opencode-go` for `opencode`).
+A profile with none of those is eligible but unranked.
+When present, profile and rule-floor `provider` values must match the strict whole-string pattern `^[a-z0-9]+(-[a-z0-9]+)*\z`.
 Bootstrap validates resolver-only `approval`, `min_confidence`, `floor`, and present `provider` values only while typed resolution is active; without the key those inert fields and the pre-existing verified-harness baseline preserve bootstrap behavior.
 
 Typed resolution additively recognizes `gemini` because AGENTS.md section 4 verifies it for crewmate and scout dispatch.
-
-| Harness | Provider declaration on the opted-in resolver path |
-| --- | --- |
-| `claude`, `codex`, `grok`, `kimi`, `cursor`, `agy`, `muse` | The resolver has an authoritative single-provider mapping. |
-| Every other verified harness | Must declare `provider` explicitly; this includes multi-provider `pi`, `pi-signed`, `omp`, and `opencode`, and unmapped `gemini`, `rovo`, and `devin`; omission is an actionable configuration error before any request. |
-
-This single-provider table is separate from the frozen legacy mapping used by `fm-quota-choose.sh`, so additions cannot alter no-key routing.
 
 **Profile quota floors**
 
@@ -1134,7 +1129,7 @@ This single-provider table is separate from the frozen legacy mapping used by `f
 - Except for `ultra`, which refuses unsupported profiles under the native-effort contract above, an effort value the chosen harness does not accept is recorded as `effort=` in task meta for traceability but omitted from the launch flags.
 - Bootstrap reports unsupported harness/model/effort combinations as a `CREW_DISPATCH` diagnostic when they are visible in the file.
 
-See [`docs/examples/crew-dispatch.json`](examples/crew-dispatch.json) for a starting point to copy into local `config/crew-dispatch.json`; its Pi default declares the `claude` provider required for typed resolution of that Anthropic model.
+See [`docs/examples/crew-dispatch.json`](examples/crew-dispatch.json) for a starting point to copy into local `config/crew-dispatch.json`; its Pi default is measured on whatever Pi accounts `config/accounts` declares and is otherwise eligible but unranked under typed resolution.
 
 **Validation and diagnostics**
 
@@ -1205,14 +1200,12 @@ An absent rules file, a default-only file, or `rules: []` returns the non-clear 
 After the answer, code applies all remaining checks and ranking:
 
 - The confidence floor and the matched rule's `approval` and `floor`.
-- Each candidate's `provider` and `floor`.
-- Every applicable account-wide and model/product row from one `quota-axi --json` snapshot.
-- The numeric `spendPriority` argmax over candidates, using each candidate's limiting row.
+- Each candidate's account and `floor`.
+- Each account's windows from one `aub status --format json` snapshot.
+- The [account ranking rule](../.agents/skills/quota-array-dispatch/SKILL.md#rank-accounts) over every candidate, which the [shared quota library](../bin/fm-quota-lib.sh) implements.
 
-The [shared quota library](../bin/fm-quota-lib.sh) accepts schema 5 and schema 6 and implements the [account-matching contract](../.agents/skills/quota-array-dispatch/SKILL.md#1-eligibility).
-
-- An expanded provider with no matching account row leaves the candidate eligible but unranked.
-- Known applicable rows from a provider with partial quota semantics remain rankable; rows whose own status is not known remain unrankable.
+- An account absent from the snapshot leaves its candidate eligible but unranked.
+- A `stale` account is ranked only when no fresh one is eligible, and an `auth_required` account never is; when every candidate account is `auth_required` the result is `error`.
 
 **Confidence and fallback rules**
 
@@ -1228,9 +1221,10 @@ No qualifying option, or two equally probable qualifying options, produces `ambi
 
 **Candidate eligibility and evidence**
 
-- Any applicable `exhausted_now` row or known zero bound makes that candidate ineligible, and a known profile-floor shortfall does the same before unrelated quota uncertainty is considered.
-- Missing or nonnumeric `spendPriority` evidence is never ranked, and every candidate is printed beside its evidence or the reason it was not rankable, including on ambiguous and approval-gated outcomes that emit no profile.
-- On the opted-in path, duplicate concrete profiles with the same harness, model, and effort inside one rule or the default array are configuration errors rather than ties.
+- A limiting window with 0% remaining makes that candidate ineligible, and a known profile-floor shortfall does the same before unrelated quota uncertainty is considered.
+- Every candidate is printed with its account, freshness, remaining percent, burn, elapsed fraction, and reserve, or the reason it was not rankable, including on ambiguous and approval-gated outcomes that emit no profile.
+- A `clear` result prints the chosen `account:` line, and its `profile:` line carries `--account` when that account is a `config/accounts` name.
+- On the opted-in path, duplicate concrete profiles with the same harness, model, effort, and account inside one rule or the default array are configuration errors rather than ties; two profiles that differ only by account are distinct candidates.
 
 **Outcomes and exit status**
 
@@ -1239,7 +1233,7 @@ No qualifying option, or two equally probable qualifying options, produces `ambi
 | `clear` | A `profile:` line ready for `fm-spawn.sh`. |
 | `ambiguous` | Confidence below the floor with no runner-up taken. |
 | `escalate` | An approval-gated rule, unverifiable rule floor, nothing rankable, or a genuine tie. |
-| `error` | API, network, malformed response metadata, rendering, or quota-axi failure. |
+| `error` | API, network, malformed response metadata, rendering, or aub failure, or every candidate account needing authentication. |
 
 Every result above exits 0.
 
@@ -1279,12 +1273,13 @@ Every home requires:
 - Compatible gh-axi.
 - chrome-devtools-axi.
 - Compatible tasks-axi, as specified in "Backlog backend" above.
-- Compatible quota-axi.
+- agent-usage-book (`aub`), whose `aub status --format json` answers a schema 5 snapshot.
 
-[`bin/fm-bootstrap.sh`](../bin/fm-bootstrap.sh) owns the axi-family floor policy and the gh-axi and lavish-axi floors, while [`bin/fm-tasks-axi-lib.sh`](../bin/fm-tasks-axi-lib.sh) and [`bin/fm-quota-lib.sh`](../bin/fm-quota-lib.sh) hold their own tools' floor constants.
+[`bin/fm-bootstrap.sh`](../bin/fm-bootstrap.sh) owns the axi-family floor policy and the gh-axi and lavish-axi floors, while [`bin/fm-tasks-axi-lib.sh`](../bin/fm-tasks-axi-lib.sh) holds tasks-axi's floor constant and [`bin/fm-quota-lib.sh`](../bin/fm-quota-lib.sh) owns the aub compatibility check and install hint.
+`quota-axi` is no longer used; `aub` replaced it as the only quota source.
 This section is the single owner of that universal toolchain list; backend guides' prerequisites point here and add only their backend-specific tools.
 
-In that list, no-mistakes runs the validation pipeline, gh-axi and chrome-devtools-axi cover GitHub and browser operations, and tasks-axi plus quota-axi back backlog mutations and quota-aware array dispatch.
+In that list, no-mistakes runs the validation pipeline, gh-axi and chrome-devtools-axi cover GitHub and browser operations, and tasks-axi plus aub back backlog mutations and quota-aware array dispatch.
 Lavish is a presentation-only dependency for visual decisions and reports; nonvisual work can proceed with plain text when it is unavailable.
 
 **Backend requirements**
@@ -1316,12 +1311,12 @@ A herdr, zellij, or cmux home is therefore never told `tmux` is missing, and the
 
 **Missing-tool diagnostics**
 
-`tasks-axi` and `quota-axi` are essential bootstrap tools in every profile.
+`tasks-axi` and `aub` are essential bootstrap tools in every profile.
 
 - An absent or incompatible `tasks-axi` reports `MISSING: tasks-axi (install: npm install -g tasks-axi)`; when `config/backlog-backend` is not `manual`, a home with a configured non-markdown adapter or a markdown backlog refuses lifecycle mutation until compatible `tasks-axi` is on `PATH`, while a manual-backend home keeps its backlog hand-edited.
 - An absent or incompatible `gh-axi` reports `MISSING: gh-axi (install: npm install -g gh-axi && gh-axi setup hooks)`.
 - An absent or incompatible `lavish-axi` reports `PRESENTATION_UNAVAILABLE` with its required floor, install command, and explicit text fallback; [`bootstrap-diagnostics`](../.agents/skills/bootstrap-diagnostics/SKILL.md) owns the response and compatibility check before visual use.
-- An absent or too-old `quota-axi` reports `MISSING: quota-axi (install: npm install -g quota-axi)`; firstmate cannot resolve a profile array without a compatible binary.
+- An absent `aub`, or one whose status does not answer a schema 5 snapshot, reports `MISSING: aub (install: cargo install --git https://github.com/gabrielassisxyz/agent-usage-book)`; firstmate cannot resolve a profile array without it.
 
 **Checkout diagnostics**
 

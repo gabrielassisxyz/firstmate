@@ -1,178 +1,206 @@
 # shellcheck shell=bash
-# Shared quota-axi compatibility floor for the bootstrap diagnostic, the
-# --json snapshot validator, and the provider-row join dispatch consumers use.
+# Shared quota source for the bootstrap diagnostic, the dispatch resolver, the
+# worker-side chooser, and the mid-task quota watch.
 # Usage: . bin/fm-quota-lib.sh
 #
-# FM_QUOTA_AXI_MIN follows the axi-family floor policy owned beside the floor
-# constants in bin/fm-bootstrap.sh.
+# The one quota source is agent-usage-book: `aub status --format json`, schema 5
+# envelope (`schema`, `command`, `run`, `generated_at`, then `accounts[]`). Each
+# account carries `account`, `freshness` (fresh | stale | auth_required),
+# `limiting_window`, and `windows[]` with `quota_used_ppm`, `resets_at_nanos`,
+# `nominal_duration_nanos`, `burn_rate`, and a `model` on model-scoped windows.
+# The account is the routing unit: firstmate's config/accounts names match aub's
+# account ids one to one.
 #
-# This file is the single owner of that version number. bin/fm-bootstrap.sh
-# turns a failing check into the operator-facing MISSING diagnostic, which is
-# what keeps an older build from reaching a dispatch intake at all.
-#
-# Snapshot schemas: fm_quota_json_valid accepts quota-axi schema 5 (one row per
-# provider, no accountKey) and schema 6 (every row carries accountKey, unique on
-# provider + accountKey; quota-axi emits it once any provider expands to more
-# than one account). Schema 5 keeps its exact pre-schema-6 rules so an older
-# quota-axi keeps working unchanged. FM_QUOTA_ROW_JQ is the one join used to
-# bind a candidate to its row under either schema.
+# fm_quota_source_compatible [timeout]  aub is on PATH, answers --version, and
+#                                        answers `status --format json` with a
+#                                        valid schema 5 envelope within the
+#                                        timeout (FM_QUOTA_SOURCE_TIMEOUT when
+#                                        omitted); otherwise one line naming aub
+#                                        on stderr and status 1.
+# fm_quota_snapshot [timeout]            print one validated snapshot.
+# fm_quota_json_valid                    validate a snapshot on stdin.
+# fm_quota_accounts_for_harness <config-dir> <harness>
+#                                        every valid config/accounts name whose
+#                                        harness matches, one per line.
+# fm_quota_default_account_for_harness <harness>
+#                                        the one aub account a harness with no
+#                                        config/accounts line is measured on.
+# FM_QUOTA_RANK_JQ                       the ranking rule, as jq definitions.
 
-FM_QUOTA_AXI_MIN=0.1.51
+FM_QUOTA_AUB_SCHEMA=5
+FM_QUOTA_SOURCE_TIMEOUT=10
+# aub's README builds from source with cargo; this is that build without a local clone.
+FM_QUOTA_AUB_INSTALL='cargo install --git https://github.com/gabrielassisxyz/agent-usage-book'
+# A rule floor's `provider` and a profile's `provider` name an aub account id.
+# shellcheck disable=SC2034  # read by the sourcing consumers
 FM_QUOTA_PROVIDER_ID_RE='^[a-z0-9]+(-[a-z0-9]+)*\z'
 
-# The eligibility section of .agents/skills/quota-array-dispatch/SKILL.md
-# owns the account-matching contract these jq definitions implement.
-# Prepend them to a consumer's program:
-#   quota_lane($harness; $model)   the candidate's account key, or "" when none
-#                                  is identified by the contract.
-#   quota_row($snapshot; $provider; $lane)
-#                                  the one provider row the candidate binds to,
-#                                  or null; schema 5 ignores $lane.
+_FM_QUOTA_LIB_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+if [ "$(type -t fm_run_timed)" != function ]; then
+  # shellcheck source=bin/fm-timeout-lib.sh
+  . "$_FM_QUOTA_LIB_DIR/fm-timeout-lib.sh"
+fi
+if [ "$(type -t fm_accounts_records)" != function ]; then
+  # shellcheck source=bin/fm-accounts-lib.sh
+  . "$_FM_QUOTA_LIB_DIR/fm-accounts-lib.sh"
+fi
+
+# The ranking rule stated in .agents/skills/quota-array-dispatch/SKILL.md
+# "Rank accounts", as jq definitions a consumer prepends to its program:
+#   aub_eval($snap; $name)  one account's evidence: freshness, limiting-window
+#                           scope, remaining `pct`, `elapsed`, `burn`, `reserve`,
+#                           `tier` (1 fresh, 2 stale), and eligible/unranked with
+#                           a reason. An account absent from the snapshot is
+#                           eligible but unranked, never blocked.
+#   aub_floor($snap; $name; $floor)
+#                           "ok", "below", or "unknown" for {scope, min_percent}
+#                           against every window whose scope label matches.
+#   aub_rank($evals)        the rankable evaluations: fresh ones, or stale ones
+#                           only when no fresh one is, by reserve, then
+#                           remaining, then the fresher observation.
+# A window's scope label is `account_wide`, `model:<model>`, or `group:<group>`,
+# the same labels aub prints in `included_scopes`.
 # shellcheck disable=SC2016,SC2034  # jq program text, not shell expansion; read by the sourcing consumers
-FM_QUOTA_ROW_JQ='
-  def quota_lane($harness; $model):
-    if $harness == "codex" then "codex-home"
-    elif ($harness == "pi" or $harness == "pi-signed") and (($model // "") | contains("/"))
-    then ($model | split("/") | first | if . == "codex-native" then "codex-home" else . end)
-    else "" end;
-  def quota_row($snapshot; $provider; $lane):
-    ([$snapshot.providers[]? | select(.provider == $provider)]) as $rows |
-    if $snapshot.schemaVersion == 6 then
-      (([$rows[] | select(.accountKey == $lane)] | first) //
-       ([$rows[] | select(.accountKey == "default")] | first) // null)
-    else ($rows | first) // null
+FM_QUOTA_RANK_JQ='
+  def aub_num: if type == "number" then . elif type == "string" then (tonumber? // null) else null end;
+  def aub_label:
+    .scope as $s |
+    if ($s | type) == "object" then
+      (if $s.kind == "model_group" then "group:\($s.group)" else ($s | tojson) end)
+    elif $s == "model" then "model:\(.model // "")"
+    else $s end;
+  def aub_untriggered: .resets_at_nanos == null and (.quota_used_ppm // 0) == 0;
+  def aub_remaining:
+    if aub_untriggered then 100 else 100 - ((.quota_used_ppm | aub_num) // 0) / 10000 end;
+  def aub_elapsed($now):
+    if .resets_at_nanos == null or ((.nominal_duration_nanos | aub_num) // 0) <= 0 then 0
+    else (1 - ((.resets_at_nanos - $now) / .nominal_duration_nanos))
+      | if . < 0 then 0 elif . > 1 then 1 else . end
     end;
+  def aub_account($snap; $name): [($snap.accounts // [])[] | select(.account == $name)] | first;
+  def aub_limiting($a):
+    [$a.windows[]? | select(.scope == $a.limiting_window.scope and
+      .nominal_duration_nanos == $a.limiting_window.nominal_duration_nanos)] | first;
+  def aub_eval($snap; $name):
+    aub_account($snap; $name) as $a |
+    if $a == null then
+      {account: $name, found: false, eligible: true, unranked: true,
+       reason: "account \($name) not in the aub snapshot"}
+    elif $a.freshness == "auth_required" then
+      {account: $name, found: true, freshness: $a.freshness, eligible: false, auth: true,
+       reason: "auth_required\(if $a.reason then " (\($a.reason))" else "" end)"}
+    elif ($a.freshness != "fresh" and $a.freshness != "stale") then
+      {account: $name, found: true, freshness: $a.freshness, eligible: true, unranked: true,
+       reason: "freshness \($a.freshness) is not rankable"}
+    else
+      aub_limiting($a) as $w |
+      if $w == null then
+        {account: $name, found: true, freshness: $a.freshness, eligible: true, unranked: true,
+         reason: "no limiting window in the aub snapshot"}
+      else
+        ($w | aub_remaining) as $r |
+        ($w | aub_elapsed($snap.generated_at)) as $e |
+        (($w.burn_rate | aub_num) // 0) as $b |
+        (if ($w | aub_untriggered) then 100 else $r - $b * (1 - $e) * 100 end) as $reserve |
+        {account: $name, found: true, freshness: $a.freshness,
+         tier: (if $a.freshness == "fresh" then 1 else 2 end),
+         scope: ($w | aub_label), pct: $r, elapsed: $e, burn: $b, reserve: $reserve,
+         age: ($a.observation_age_nanos // null)}
+        + (if $r > 0 then {eligible: true, reason: "ok"}
+           else {eligible: false, reason: "0% remaining at \($w | aub_label)"} end)
+      end
+    end;
+  def aub_floor($snap; $name; $floor):
+    aub_account($snap; $name) as $a |
+    if $a == null or $a.freshness == "auth_required" then "unknown"
+    else [$a.windows[]? | select(aub_label == $floor.scope) | aub_remaining] as $pcts |
+      if ($pcts | length) == 0 then "unknown"
+      elif any($pcts[]; . < $floor.min_percent) then "below"
+      else "ok" end
+    end;
+  def aub_rank($evals):
+    [$evals[] | select(.eligible and ((.unranked // false) | not))] as $ok |
+    ([$ok[] | select(.tier == 1)] | if length > 0 then . else [$ok[] | select(.tier == 2)] end)
+    | sort_by([-.reserve, -.pct, (.age // 0)]);
 '
 
-fm_quota_axi_compatible() {
-  local timeout=${1:-} output parts major minor patch extra
-  local min_major min_minor min_patch min_extra
-  command -v quota-axi >/dev/null 2>&1 || return 1
-  if [ -n "$timeout" ]; then
-    case "$timeout" in
-      ''|*[!0-9]*|0) return 1 ;;
-    esac
-    [ "$(type -t fm_run_timed)" = function ] || return 1
-    output=$(fm_run_timed "$timeout" quota-axi --version 2>/dev/null </dev/null) || return 1
-  else
-    output=$(quota-axi --version 2>/dev/null </dev/null) || return 1
-  fi
-  parts=$(printf '%s\n' "$output" |
-    sed -n 's/.*\([0-9][0-9]*\)\.\([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1 \2 \3/p' |
-    head -1)
-  IFS=' ' read -r major minor patch extra <<< "$parts"
-  # An unparseable version is incompatible, never assumed current, so a
-  # development or vendored build cannot pass a floor it was never checked against.
-  [ -n "$major" ] && [ -n "$minor" ] && [ -n "$patch" ] && [ -z "$extra" ] || return 1
-  # The floor is compared from FM_QUOTA_AXI_MIN so bumping it needs one edit.
-  IFS='.' read -r min_major min_minor min_patch min_extra <<< "$FM_QUOTA_AXI_MIN"
-  [ -n "$min_major" ] && [ -n "$min_minor" ] && [ -n "$min_patch" ] && [ -z "$min_extra" ] || return 1
-  [ "$major" -gt "$min_major" ] && return 0
-  [ "$major" -eq "$min_major" ] || return 1
-  [ "$minor" -gt "$min_minor" ] && return 0
-  [ "$minor" -eq "$min_minor" ] || return 1
-  [ "$patch" -ge "$min_patch" ]
-}
-
 fm_quota_json_valid() {
-  jq -se --arg provider_re "$FM_QUOTA_PROVIDER_ID_RE" '
+  jq -se --argjson schema "$FM_QUOTA_AUB_SCHEMA" '
     length == 1 and
     (.[0] | type) == "object" and
     (.[0] |
-      (.providers | type) == "array" and
-      (if .schemaVersion == 5 then
-         (([.providers[].provider] | length) == ([.providers[].provider] | unique | length))
-       elif .schemaVersion == 6 then
-         all(.providers[];
-           (.accountKey | type) == "string" and
-           (.accountKey | length) > 0 and
-           ((.accountKey | test("\\s")) | not)) and
-         (([.providers[] | [.provider, .accountKey]] | length) ==
-          ([.providers[] | [.provider, .accountKey]] | unique | length))
-       else false
-       end) and
-      all(.providers[];
-      (.provider | type) == "string" and
-      (.provider | test($provider_re)) and
-      (.quotaSemantics | type) == "object" and
-      (.quotaSemantics.status as $semantics_status |
-        (["known", "partial", "unknown"] | index($semantics_status)) != null and
-        (.quotaSemantics.effectiveAvailability | type) == "array" and
-        (if $semantics_status == "known" then
-           ((.quotaSemantics.effectiveAvailability | length) > 0 and
-            all(.quotaSemantics.effectiveAvailability[];
-              .status == "known" or .status == "unknown"
-            ))
-         elif $semantics_status == "unknown" then
-           all(.quotaSemantics.effectiveAvailability[]; .status == "unknown")
-         else true
-         end) and
-        all(.quotaSemantics.effectiveAvailability[];
+      .schema == $schema and
+      (.generated_at | type) == "number" and
+      (.accounts | type) == "array" and
+      (.accounts | length) > 0 and
+      all(.accounts[];
+        type == "object" and
+        (.account | type) == "string" and (.account | length) > 0 and
+        (.freshness | type) == "string" and (.freshness | length) > 0 and
+        (.windows | type) == "array" and
+        all(.windows[];
           type == "object" and
-          (.scope | type) == "string" and
-          (.scope | length) > 0 and
-          ((.scope | test("^\\s|\\s$")) | not) and
-          ((.status == "known" and
-            (.runway.status as $runway_status |
-            ((.effectivePercentRemaining | type) == "number" and
-             .effectivePercentRemaining >= 0 and
-             .effectivePercentRemaining <= 100 and
-             (.runway | type) == "object" and
-             ($runway_status | type) == "string" and
-             (["through_reset", "projected_exhaustion", "exhausted_now", "unknown"] |
-               index($runway_status)) != null))) or
-           (.status == "unknown" and
-            (has("effectivePercentRemaining") | not) and
-            ((has("runway") | not) or
-             ((.runway | type) == "object" and
-              (.runway.status as $unknown_runway_status |
-               (["unknown", "exhausted_now"] | index($unknown_runway_status)) != null)))))
-        )
-      )
-    )
+          (.quota_used_ppm | type) == "number" and
+          (.nominal_duration_nanos | type) == "number" and
+          ((.resets_at_nanos == null) or ((.resets_at_nanos | type) == "number")))) and
+      (([.accounts[].account] | length) == ([.accounts[].account] | unique | length))
     )
   ' >/dev/null 2>&1
 }
 
-fm_quota_single_provider_table() {
-  printf '%s\n' \
-    'claude claude' \
-    'codex codex' \
-    'grok grok' \
-    'kimi kimi' \
-    'cursor cursor' \
-    'agy agy' \
-    'muse meta'
+_fm_quota_timeout() {
+  local timeout=${1:-$FM_QUOTA_SOURCE_TIMEOUT}
+  case "$timeout" in
+    ''|*[!0-9]*|0) return 1 ;;
+  esac
+  printf '%s\n' "$timeout"
 }
 
-fm_quota_single_provider_for_harness() {
-  local harness provider
-  while read -r harness provider; do
-    if [ "$harness" = "$1" ]; then
-      printf '%s\n' "$provider"
-      return 0
-    fi
-  done < <(fm_quota_single_provider_table)
-  return 1
+fm_quota_snapshot() {
+  local timeout output
+  timeout=$(_fm_quota_timeout "${1:-}") || return 1
+  command -v aub >/dev/null 2>&1 || return 1
+  output=$(fm_run_timed "$timeout" aub status --format json 2>/dev/null </dev/null) || return 1
+  printf '%s\n' "$output" | fm_quota_json_valid || return 1
+  printf '%s\n' "$output"
 }
 
-fm_quota_provider_for_harness() {
+fm_quota_source_compatible() {
+  local timeout
+  if ! timeout=$(_fm_quota_timeout "${1:-}"); then
+    echo "aub: invalid quota source timeout: ${1:-}" >&2
+    return 1
+  fi
+  if ! command -v aub >/dev/null 2>&1; then
+    echo "aub: not on PATH (install: $FM_QUOTA_AUB_INSTALL)" >&2
+    return 1
+  fi
+  if ! fm_run_timed "$timeout" aub --version >/dev/null 2>&1 </dev/null; then
+    echo "aub: --version failed (install: $FM_QUOTA_AUB_INSTALL)" >&2
+    return 1
+  fi
+  if ! fm_quota_snapshot "$timeout" >/dev/null; then
+    echo "aub: status --format json did not answer a schema $FM_QUOTA_AUB_SCHEMA snapshot within ${timeout}s (install: $FM_QUOTA_AUB_INSTALL)" >&2
+    return 1
+  fi
+}
+
+fm_quota_accounts_for_harness() {
+  local config=$1 want=$2 file name harness status
+  file=$config/accounts
+  [ -f "$file" ] && [ -r "$file" ] || return 0
+  while IFS=$'\t' read -r _ name harness _ status _; do
+    [ "$status" = ok ] && [ "$harness" = "$want" ] || continue
+    printf '%s\n' "$name"
+  done < <(fm_accounts_records "$file")
+}
+
+# Harnesses that run on exactly one aub account and so need no config/accounts
+# line; every other harness is measured only through config/accounts.
+fm_quota_default_account_for_harness() {
   case "$1" in
-    omp)
-      case "${2:-}" in
-        openai-codex/*)  printf 'codex\n' ;;
-        claude-bridge/*) printf 'claude\n' ;;
-        *)               return 1 ;;
-      esac
-      ;;
-    claude)       printf 'claude\n' ;;
-    codex)        printf 'codex\n' ;;
-    opencode)     printf 'codex\n' ;;
-    pi|pi-signed) printf 'pi\n' ;;
-    grok)         printf 'grok\n' ;;
-    kimi)         printf 'kimi\n' ;;
-    cursor)       printf 'cursor\n' ;;
-    muse)         printf 'meta\n' ;;
-    *)            return 1 ;;
+    agy)      printf 'agy\n' ;;
+    opencode) printf 'opencode-go\n' ;;
+    *)        return 1 ;;
   esac
 }

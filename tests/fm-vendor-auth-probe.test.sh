@@ -33,18 +33,18 @@ STDIN_SENTINEL='SENTINEL-STDIN-MUST-NOT-REACH-VENDOR-CLI'
 
 # --- fake toolchain ---------------------------------------------------------
 #
-# quota-axi is present on PATH and logs every invocation. The script must never
+# aub is present on PATH and logs every invocation. The script must never
 # call it: reading quota is the dispatch owner's job against one intake snapshot,
 # and a probe that re-read it would reintroduce the retired coupling.
 make_fakebin() {
   local dir=$1 fakebin
   fakebin=$(fm_fakebin "$dir")
-  cat > "$fakebin/quota-axi" <<'SH'
+  cat > "$fakebin/aub" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FM_FAKE_QUOTA_LOG"
 exit 0
 SH
-  chmod +x "$fakebin/quota-axi"
+  chmod +x "$fakebin/aub"
 
   cat > "$fakebin/grok" <<'SH'
 #!/usr/bin/env bash
@@ -158,7 +158,7 @@ assert_grok_never_ran() {  # <label>
 
 assert_quota_never_read() {  # <label>
   [ ! -s "$RUN_QUOTA_LOG" ] \
-    || fail "$1: the probe must never call quota-axi, but it ran: $(tr '\n' '|' < "$RUN_QUOTA_LOG")"
+    || fail "$1: the probe must never call aub, but it ran: $(tr '\n' '|' < "$RUN_QUOTA_LOG")"
 }
 
 # --- the retired dispatch coupling ------------------------------------------

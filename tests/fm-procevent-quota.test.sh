@@ -9,279 +9,195 @@ LAB=$(mktemp -d "${TMPDIR:-/tmp}/fm-procevent-quota.XXXXXX")
 FAKEBIN="$LAB/fakebin"
 COUNT="$LAB/count"
 
+# shellcheck source=bin/fm-timeout-lib.sh
+. "$BIN/fm-timeout-lib.sh"
+
 cleanup() { rm -rf "$LAB"; }
 trap cleanup EXIT
 mkdir -p "$FAKEBIN"
 
-cat > "$FAKEBIN/quota-axi" <<'SH'
+# Fake aub. Each account has one weekly account-wide window; AUB_MODE picks the
+# snapshot, and AUB_COUNT numbers the status calls so a watch can see quota
+# change between polls.
+cat > "$FAKEBIN/aub" <<'SH'
 #!/usr/bin/env bash
 if [ "${1:-}" = "--version" ]; then
-  printf 'quota-axi 0.1.51\n'
+  printf 'aub 0.1.0 (fake)\n'
   exit 0
 fi
-case "${QUOTA_AXI_MALFORMED:-}" in
-  schema)
-    printf '{"schemaVersion":4,"providers":[]}\n'
-    exit 0
+[ "$*" = 'status --format json' ] || exit 2
+count=0
+[ ! -f "${AUB_COUNT:?}" ] || read -r count < "$AUB_COUNT"
+count=$((count + 1))
+printf '%s\n' "$count" > "$AUB_COUNT"
+# account <name> <freshness> <remaining %> [<resets>]
+account() {
+  jq -nc --arg n "$1" --arg f "$2" --argjson r "$3" --argjson reset "${4:-2000300000000000000}" '
+    {account: $n, freshness: $f, observation_age_nanos: 1,
+     limiting_window: {scope: "account_wide", nominal_duration_nanos: 604800000000000, burn_rate: "1.0"},
+     windows: [{semantic_key: "weekly", scope: "account_wide", quota_used_ppm: ((100 - $r) * 10000),
+       resets_at_nanos: $reset, nominal_duration_nanos: 604800000000000, burn_rate: "1.0"}]}'
+}
+envelope() {
+  jq -sc '{schema: 5, command: "status", run: "run-test", generated_at: 2000000000000000000, accounts: .}'
+}
+case "${AUB_MODE:-}" in
+  schema) printf '{"schema":4,"generated_at":1,"accounts":[]}\n' ;;
+  empty) printf '{"schema":5,"generated_at":1,"accounts":[]}\n' ;;
+  no-windows) printf '{"schema":5,"generated_at":1,"accounts":[{"account":"codex-primary","freshness":"fresh"}]}\n' ;;
+  duplicate) { account codex-primary fresh 50; account codex-primary fresh 50; } | envelope ;;
+  types) account codex-primary fresh 50 | jq -c '.windows[0].quota_used_ppm = "0"' | envelope ;;
+  exhausted-detail) { account codex-primary fresh 5; account gmail fresh 50; } | envelope ;;
+  auth) { account codex-primary auth_required 0; account gmail fresh 50; } | envelope ;;
+  at-threshold)
+    remaining=9
+    [ "$count" -ne 1 ] || remaining=10
+    account codex-primary fresh "$remaining" | envelope
     ;;
-  duplicate)
-    printf '{"schemaVersion":5,"providers":[{"provider":"codex","quotaSemantics":{"status":"unknown","effectiveAvailability":[]}},{"provider":"codex","quotaSemantics":{"status":"unknown","effectiveAvailability":[]}}]}\n'
-    exit 0
-    ;;
-  types)
-    printf '{"schemaVersion":5,"providers":[{"provider":"codex","quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":"0","runway":{"status":"through_reset"}}]}}]}\n'
-    exit 0
-    ;;
-  range)
-    printf '{"schemaVersion":5,"providers":[{"provider":"codex","quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":150,"runway":{"status":"through_reset"}}]}}]}\n'
-    exit 0
-    ;;
-  runway)
-    printf '{"schemaVersion":5,"providers":[{"provider":"codex","quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":50,"runway":{"status":"invalid"}}]}}]}\n'
-    exit 0
-    ;;
-  availability)
-    printf '{"schemaVersion":5,"providers":[{"provider":"codex","quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"typo","effectivePercentRemaining":0,"runway":{"status":"exhausted_now"}},{"scope":"model:codex_bengalfox","status":"known","effectivePercentRemaining":50,"runway":{"status":"through_reset"}}]}}]}\n'
-    exit 0
-    ;;
-  known-empty)
-    printf '{"schemaVersion":5,"providers":[{"provider":"codex","quotaSemantics":{"status":"known","effectiveAvailability":[]}}]}\n'
-    exit 0
-    ;;
-  semantics-mismatch)
-    printf '{"schemaVersion":5,"providers":[{"provider":"codex","quotaSemantics":{"status":"unknown","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":50,"runway":{"status":"through_reset"}}]}}]}\n'
-    exit 0
-    ;;
-  identity)
-    printf '{"schemaVersion":5,"providers":[{"provider":" codex","quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":0,"runway":{"status":"exhausted_now"}}]}}]}\n'
-    exit 0
-    ;;
-  schema6-keyless)
-    printf '{"schemaVersion":6,"providers":[{"provider":"codex","accountKey":"openai-codex","quotaSemantics":{"status":"unknown","effectiveAvailability":[]}},{"provider":"codex","quotaSemantics":{"status":"unknown","effectiveAvailability":[]}}]}\n'
-    exit 0
-    ;;
-  schema6-duplicate)
-    printf '{"schemaVersion":6,"providers":[{"provider":"codex","accountKey":"openai-codex","quotaSemantics":{"status":"unknown","effectiveAvailability":[]}},{"provider":"codex","accountKey":"openai-codex","quotaSemantics":{"status":"unknown","effectiveAvailability":[]}}]}\n'
-    exit 0
+  *)
+    codex=0
+    [ "$count" -ne 1 ] || codex=20
+    { account codex-primary fresh "$codex"; account gmail fresh 50; } | envelope
     ;;
 esac
-# Schema 6: an expanded provider (codex, two Pi lanes) puts one provider id on
-# two rows keyed by accountKey; the schema 5 pair is the same state from an
-# older quota-axi that only knows one codex account.
-if [ "${QUOTA_AXI_SCHEMA6:-0}" = 1 ]; then
-  printf '{"schemaVersion":6,"providers":[{"provider":"codex","accountKey":"openai-codex","quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":3,"runway":{"status":"projected_exhaustion"}}]}},{"provider":"codex","accountKey":"openai-codex-work","quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":0,"runway":{"status":"exhausted_now"}}]}},{"provider":"cursor","accountKey":"default","quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":5,"runway":{"status":"through_reset"}}]}}]}\n'
-  exit 0
-fi
-if [ "${QUOTA_AXI_SCHEMA5_PAIR:-0}" = 1 ]; then
-  printf '{"schemaVersion":5,"providers":[{"provider":"codex","quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":3,"runway":{"status":"projected_exhaustion"}}]}},{"provider":"cursor","quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":5,"runway":{"status":"through_reset"}}]}}]}\n'
-  exit 0
-fi
-if [ "${QUOTA_AXI_EXHAUSTED_DETAIL:-0}" = 1 ]; then
-  printf '{"schemaVersion":5,"providers":[{"provider":"codex","quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":10,"runway":{"status":"exhausted_now"}},{"scope":"model:foo","status":"known","effectivePercentRemaining":5,"runway":{"status":"through_reset"}}]}}]}\n'
-  exit 0
-fi
-if [ "${QUOTA_AXI_UNKNOWN_EXHAUSTED:-0}" = 1 ]; then
-  printf '{"schemaVersion":5,"providers":[{"provider":"codex","quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"unknown","runway":{"status":"exhausted_now"}}]}}]}\n'
-  exit 0
-fi
-count=0
-[ ! -f "$QUOTA_AXI_COUNT" ] || read -r count < "$QUOTA_AXI_COUNT"
-count=$((count + 1))
-printf '%s\n' "$count" > "$QUOTA_AXI_COUNT"
-if [ "${QUOTA_AXI_UNKNOWN_FIRST:-0}" = 1 ] && [ "$count" -eq 1 ]; then
-  printf '{"schemaVersion":5,"providers":[{"provider":"codex","quotaSemantics":{"status":"unknown","effectiveAvailability":[]}}]}\n'
-  exit 0
-fi
-if [ "${QUOTA_AXI_KNOWN_UNKNOWN_FIRST:-0}" = 1 ] && [ "$count" -eq 1 ]; then
-  printf '{"schemaVersion":5,"providers":[{"provider":"codex","quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"unknown","runway":{"status":"unknown"}}]}}]}\n'
-  exit 0
-fi
-if [ "${QUOTA_AXI_EMPTY_FIRST:-0}" = 1 ] && [ "$count" -eq 1 ]; then
-  printf '{"schemaVersion":5,"providers":[]}\n'
-  exit 0
-fi
-if [ "${QUOTA_AXI_AT_THRESHOLD:-0}" = 1 ]; then
-  if [ "$count" -eq 1 ]; then
-    remaining=10
-  else
-    remaining=9
-  fi
-  printf '{"schemaVersion":5,"providers":[{"provider":"codex","quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":%s,"runway":{"status":"through_reset"}}]}}]}\n' "$remaining"
-  exit 0
-fi
-if [ "$count" -eq 1 ]; then
-  model_remaining=20
-  runway=through_reset
-else
-  model_remaining=0
-  runway=exhausted_now
-fi
-printf '{"schemaVersion":5,"providers":[{"provider":"codex","quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":20,"runway":{"status":"through_reset"}},{"scope":"model:codex_bengalfox","status":"known","effectivePercentRemaining":%s,"runway":{"status":"%s"}}]}},{"provider":"claude","quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":50,"runway":{"status":"through_reset"}}]}}]}\n' "$model_remaining" "$runway"
 SH
-chmod +x "$FAKEBIN/quota-axi"
+chmod +x "$FAKEBIN/aub"
 
 fail() { printf 'not ok - %s\n' "$1" >&2; exit 1; }
 ok() { printf 'ok - %s\n' "$1"; }
+poll() { AUB_COUNT="$COUNT" PATH="$FAKEBIN:$PATH" "$BIN/fm-procevent-quota.sh" poll "$@"; }
 
 if help=$("$BIN/fm-procevent-quota.sh" --help 2>&1); then
   fail "help unexpectedly exited zero"
 fi
-printf '%s\n' "$help" | grep -Fq 'fm-procevent-quota.sh retire [--provider <provider>]' \
+printf '%s\n' "$help" | grep -Fq 'fm-procevent-quota.sh retire [--account <account>]' \
   || fail "help omitted the retire usage"
 if printf '%s\n' "$help" | grep -Fq 'set -u'; then
   fail "help leaked executable source"
 fi
 ok "help renders only the complete header"
 
-out=$(QUOTA_AXI_EXHAUSTED_DETAIL=1 QUOTA_AXI_COUNT="$COUNT" PATH="$FAKEBIN:$PATH" \
-  "$BIN/fm-procevent-quota.sh" poll)
-printf '%s\n' "$out" | grep -qx 'status: exhausted' \
-  || fail "default aggregate poll did not report exhaustion"
+rm -f "$COUNT"
+out=$(AUB_MODE=exhausted-detail poll)
+printf '%s\n' "$out" | grep -qx 'status: low' \
+  || fail "default aggregate poll did not report the low account"
 printf '%s\n' "$out" | grep -qx 'quota: quota' \
   || fail "default aggregate poll did not use the aggregate source"
 ok "poll accepts its documented defaults"
 
-out=$(QUOTA_AXI_COUNT="$COUNT" PATH="$FAKEBIN:$PATH" "$BIN/fm-procevent-quota.sh" poll --interval 0.01 --threshold 10 --provider codex --timeout 1)
-printf '%s\n' "$out" | grep -qx 'status: exhausted' || fail "provider watch did not report exhaustion"
-printf '%s\n' "$out" | grep -qx 'condition_polls: 2' || fail "provider watch did not wait through the healthy poll"
-ok "provider watch blocks until a model scope is exhausted"
+rm -f "$COUNT"
+out=$(poll --interval 0.01 --threshold 10 --account codex-primary --timeout 1)
+printf '%s\n' "$out" | grep -qx 'quota: quota-codex-primary' || fail "account watch did not use its source id"
+printf '%s\n' "$out" | grep -qx 'status: exhausted' || fail "account watch did not report exhaustion"
+printf '%s\n' "$out" | grep -qx 'condition_polls: 2' || fail "account watch did not wait through the healthy poll"
+ok "account watch blocks until its window is exhausted"
 
-out=$(QUOTA_AXI_EXHAUSTED_DETAIL=1 QUOTA_AXI_COUNT="$COUNT" PATH="$FAKEBIN:$PATH" \
-  "$BIN/fm-procevent-quota.sh" poll --interval 1 --threshold 10 --provider codex --timeout 1)
+rm -f "$COUNT"
+out=$(AUB_MODE=exhausted-detail poll --interval 1 --threshold 10 --account codex-primary --timeout 1)
 detail=$(printf '%s\n' "$out" | sed -n 's/^detail: //p')
 printf '%s\n' "$detail" | jq -e '
-  .best.scope == "all_models" and
-  .best.runway.status == "exhausted_now"
-' >/dev/null || fail "exhausted poll recorded non-triggering detail: $detail"
-ok "exhausted poll records the triggering scope"
-
-out=$(QUOTA_AXI_UNKNOWN_EXHAUSTED=1 QUOTA_AXI_COUNT="$COUNT" PATH="$FAKEBIN:$PATH" \
-  "$BIN/fm-procevent-quota.sh" poll --interval 1 --threshold 10 --provider codex --timeout 1)
-printf '%s\n' "$out" | grep -qx 'status: exhausted' \
-  || fail "unknown headroom with exhausted runway did not wake as exhausted"
-ok "poll detects exhausted runway under unknown headroom"
+  .account == "codex-primary" and
+  .freshness == "fresh" and
+  .tightest.scope == "account_wide" and
+  .tightest.remaining == 5
+' >/dev/null || fail "low poll recorded detail without its account: $detail"
+ok "a triggered poll names the account and its tightest window"
 
 rm -f "$COUNT"
-out=$(QUOTA_AXI_COUNT="$COUNT" PATH="$FAKEBIN:$PATH" "$BIN/fm-procevent-quota.sh" poll --interval 0.01 --threshold 10 --provider '' --timeout 1)
+out=$(poll --interval 0.01 --threshold 10 --account '' --timeout 1)
 printf '%s\n' "$out" | grep -qx 'status: exhausted' || fail "aggregate watch did not report exhaustion"
-printf '%s\n' "$out" | grep -qx 'condition_polls: 2' || fail "aggregate watch did not evaluate all providers"
-ok "aggregate watch blocks until any scope is exhausted"
+printf '%s\n' "$out" | grep -qx 'condition_polls: 2' || fail "aggregate watch did not evaluate every account"
+detail=$(printf '%s\n' "$out" | sed -n 's/^detail: //p')
+printf '%s\n' "$detail" | jq -e '
+  .account == "aggregate" and
+  ([.summary[].account] == ["codex-primary", "gmail"]) and
+  ([.summary[] | select(.account == "gmail") | .tightest.remaining] == [50])
+' >/dev/null || fail "aggregate detail did not keep each account separate: $detail"
+ok "aggregate watch reads every account without combining them"
 
 rm -f "$COUNT"
-out=$(QUOTA_AXI_EMPTY_FIRST=1 QUOTA_AXI_COUNT="$COUNT" PATH="$FAKEBIN:$PATH" "$BIN/fm-procevent-quota.sh" poll --interval 0.01 --threshold 10 --provider '' --timeout 1)
-printf '%s\n' "$out" | grep -qx 'status: exhausted' || fail "empty aggregate quota did not continue polling"
-printf '%s\n' "$out" | grep -qx 'condition_polls: 2' || fail "empty aggregate quota stopped early"
-ok "aggregate watch preserves empty quota uncertainty"
+out=$(AUB_MODE=auth AUB_COUNT="$COUNT" PATH="$FAKEBIN:$PATH" \
+  fm_run_timed 2 "$BIN/fm-procevent-quota.sh" poll --interval 0.2 --threshold 10 --timeout 1)
+[ -z "$out" ] || fail "aggregate watch fired on an auth_required account: $out"
+ok "aggregate watch skips an auth_required account"
 
-if err=$(QUOTA_AXI_COUNT="$COUNT" PATH="$FAKEBIN:$PATH" "$BIN/fm-procevent-quota.sh" arm --provider 2>&1); then
-  fail "missing provider value unexpectedly armed a watch"
+rm -f "$COUNT"
+out=$(AUB_MODE=auth poll --interval 1 --threshold 10 --account codex-primary --timeout 1)
+printf '%s\n' "$out" | grep -qx 'status: error' || fail "a watch on an auth_required account did not report error"
+printf '%s\n' "$out" | grep -qx 'condition_polls: 1' || fail "an auth_required account watch did not stop immediately"
+ok "an auth_required account is an error for its own watch"
+
+rm -f "$COUNT"
+out=$(poll --interval 1 --threshold 10 --account ghost --timeout 1)
+printf '%s\n' "$out" | grep -qx 'status: error' || fail "an account absent from the snapshot did not report error"
+ok "a watch on an account aub does not list reports error"
+
+if err=$(AUB_COUNT="$COUNT" PATH="$FAKEBIN:$PATH" "$BIN/fm-procevent-quota.sh" arm --account 2>&1); then
+  fail "missing account value unexpectedly armed a watch"
 fi
-[ "$err" = "error: --provider needs a value" ] || fail "missing provider value returned: $err"
-ok "arm rejects a missing provider value"
+[ "$err" = "error: --account needs a value" ] || fail "missing account value returned: $err"
+ok "arm rejects a missing account value"
 
-for provider in -- codex-; do
-  if err=$(QUOTA_AXI_COUNT="$COUNT" PATH="$FAKEBIN:$PATH" "$BIN/fm-procevent-quota.sh" arm --provider "$provider" 2>&1); then
-    fail "noncanonical provider unexpectedly armed a watch: $provider"
+for account in -- codex-; do
+  if err=$(AUB_COUNT="$COUNT" PATH="$FAKEBIN:$PATH" "$BIN/fm-procevent-quota.sh" arm --account "$account" 2>&1); then
+    fail "noncanonical account unexpectedly armed a watch: $account"
   fi
-  [ "$err" = "error: invalid provider: $provider" ] || fail "noncanonical provider returned: $err"
+  [ "$err" = "error: invalid account: $account" ] || fail "noncanonical account returned: $err"
 done
-ok "arm rejects noncanonical provider identities"
+ok "arm rejects noncanonical account identities"
+
+NO_AUB_BIN="$LAB/no-aub-bin"
+mkdir -p "$NO_AUB_BIN"
+for tool in bash jq perl dirname cat awk sed; do
+  command -v "$tool" >/dev/null 2>&1 && ln -s "$(command -v "$tool")" "$NO_AUB_BIN/$tool"
+done
+if err=$(FM_HOME="$LAB/arm-home" FM_STATE_OVERRIDE="$LAB/arm-state" PATH="$NO_AUB_BIN" \
+  "$BIN/fm-procevent-quota.sh" arm --account codex-primary 2>&1); then
+  fail "arm without aub unexpectedly registered a watch"
+fi
+printf '%s\n' "$err" | grep -Fq 'error: aub: not on PATH (install: ' || fail "arm without aub did not name aub: $err"
+ok "arm refuses without aub and names it"
 
 out=$(FM_HOME="$LAB/retire-home" FM_STATE_OVERRIDE="$LAB/retire-state" \
-  "$BIN/fm-procevent-quota.sh" retire --provider codex)
-[ "$out" = "retired: quota-codex" ] || fail "provider retire targeted the wrong source: $out"
-ok "provider retire resolves the armed source id"
+  "$BIN/fm-procevent-quota.sh" retire --account codex-primary)
+[ "$out" = "retired: quota-codex-primary" ] || fail "account retire targeted the wrong source: $out"
+ok "account retire resolves the armed source id"
 
-if err=$(QUOTA_AXI_COUNT="$COUNT" PATH="$FAKEBIN:$PATH" "$BIN/fm-procevent-quota.sh" poll --interval 1 --threshold 100.5 --provider codex --timeout 1 2>&1); then
+if err=$(poll --interval 1 --threshold 100.5 --account codex-primary --timeout 1 2>&1); then
   fail "threshold above 100 unexpectedly started polling"
 fi
 [ "$err" = "error: --threshold needs a percent 0-100" ] || fail "invalid threshold returned: $err"
 ok "poll rejects a decimal threshold above 100"
 
 rm -f "$COUNT"
-out=$(QUOTA_AXI_COUNT="$COUNT" PATH="$FAKEBIN:$PATH" "$BIN/fm-procevent-quota.sh" poll --interval 0.01 --threshold 010 --provider codex --timeout 1)
+out=$(poll --interval 0.01 --threshold 010 --account codex-primary --timeout 1)
 printf '%s\n' "$out" | grep -qx 'status: exhausted' || fail "leading-zero threshold did not evaluate quota"
 printf '%s\n' "$out" | grep -qx 'condition_polls: 2' || fail "leading-zero threshold stopped before exhaustion"
 ok "poll accepts a leading-zero threshold"
 
 rm -f "$COUNT"
-out=$(QUOTA_AXI_AT_THRESHOLD=1 QUOTA_AXI_COUNT="$COUNT" PATH="$FAKEBIN:$PATH" "$BIN/fm-procevent-quota.sh" poll --interval 0.01 --threshold 10 --provider codex --timeout 1)
+out=$(AUB_MODE=at-threshold poll --interval 0.01 --threshold 10 --account codex-primary --timeout 1)
 printf '%s\n' "$out" | grep -qx 'status: low' || fail "quota below the threshold did not report low"
 printf '%s\n' "$out" | grep -qx 'condition_polls: 2' || fail "quota at the threshold fired before dropping below it"
 ok "poll fires only after quota drops below the threshold"
 
-if err=$(QUOTA_AXI_COUNT="$COUNT" PATH="$FAKEBIN:$PATH" "$BIN/fm-procevent-quota.sh" poll --provider 2>&1); then
-  fail "missing poll provider value unexpectedly succeeded"
+if err=$(poll --account 2>&1); then
+  fail "missing poll account value unexpectedly succeeded"
 fi
-[ "$err" = "error: --provider needs a value" ] || fail "missing poll provider returned: $err"
+[ "$err" = "error: --account needs a value" ] || fail "missing poll account returned: $err"
 ok "poll rejects a missing option value"
 
 rm -f "$COUNT"
-out=$(FM_TIMEOUT_MECHANISM_OVERRIDE=bash QUOTA_AXI_COUNT="$COUNT" PATH="$FAKEBIN:$PATH" "$BIN/fm-procevent-quota.sh" poll --interval 0.01 --threshold 10 --provider codex --timeout 1)
+out=$(FM_TIMEOUT_MECHANISM_OVERRIDE=bash poll --interval 0.01 --threshold 10 --account codex-primary --timeout 1)
 printf '%s\n' "$out" | grep -qx 'status: exhausted' || fail "bash timeout fallback did not poll quota"
 printf '%s\n' "$out" | grep -qx 'condition_polls: 2' || fail "bash timeout fallback stopped before exhaustion"
 ok "quota polling uses the shared bash timeout fallback"
 
-for malformed in schema duplicate types range runway availability known-empty semantics-mismatch identity; do
-  out=$(QUOTA_AXI_MALFORMED="$malformed" QUOTA_AXI_COUNT="$COUNT" PATH="$FAKEBIN:$PATH" "$BIN/fm-procevent-quota.sh" poll --interval 1 --threshold 10 --provider codex --timeout 1)
+for malformed in schema empty no-windows duplicate types; do
+  out=$(AUB_MODE="$malformed" poll --interval 1 --threshold 10 --account codex-primary --timeout 1)
   printf '%s\n' "$out" | grep -qx 'status: error' || fail "$malformed snapshot did not report an error"
   printf '%s\n' "$out" | grep -qx 'condition_polls: 1' || fail "$malformed snapshot did not stop immediately"
 done
-ok "poll rejects malformed schema-five snapshots"
-
-for malformed in schema6-keyless schema6-duplicate; do
-  out=$(QUOTA_AXI_MALFORMED="$malformed" QUOTA_AXI_COUNT="$COUNT" PATH="$FAKEBIN:$PATH" "$BIN/fm-procevent-quota.sh" poll --interval 1 --threshold 10 --provider codex --timeout 1)
-  printf '%s\n' "$out" | grep -qx 'status: error' || fail "$malformed snapshot did not report an error"
-  printf '%s\n' "$out" | grep -qx 'condition_polls: 1' || fail "$malformed snapshot did not stop immediately"
-done
-ok "poll rejects schema-six snapshots missing or repeating an account key"
-
-out=$(QUOTA_AXI_SCHEMA6=1 QUOTA_AXI_COUNT="$COUNT" PATH="$FAKEBIN:$PATH" "$BIN/fm-procevent-quota.sh" poll --interval 1 --threshold 10 --provider '' --timeout 1)
-printf '%s\n' "$out" | grep -qx 'status: exhausted' || fail "schema 6 aggregate watch did not report the exhausted account"
-printf '%s\n' "$out" | grep -qx 'condition_polls: 1' || fail "schema 6 aggregate watch did not fire on the first poll"
-detail=$(printf '%s\n' "$out" | sed -n 's/^detail: //p')
-printf '%s\n' "$detail" | jq -e '
-  [.summary[] | select(.provider == "codex") | .accountKey] == ["openai-codex", "openai-codex-work"] and
-  ([.summary[] | select(.accountKey == "openai-codex-work") | .best.runway.status] == ["exhausted_now"]) and
-  ([.summary[] | select(.accountKey == "openai-codex") | .best.effectivePercentRemaining] == [3])
-' >/dev/null || fail "schema 6 aggregate detail did not keep each account separate: $detail"
-ok "aggregate watch reads every schema 6 account row without combining them"
-
-out=$(QUOTA_AXI_SCHEMA6=1 QUOTA_AXI_COUNT="$COUNT" PATH="$FAKEBIN:$PATH" "$BIN/fm-procevent-quota.sh" poll --interval 1 --threshold 10 --provider cursor --timeout 1)
-printf '%s\n' "$out" | grep -qx 'status: low' || fail "schema 6 provider watch included another provider's exhausted account"
-detail=$(printf '%s\n' "$out" | sed -n 's/^detail: //p')
-printf '%s\n' "$detail" | jq -e '.provider == "cursor" and .accountKey == "default" and .best.effectivePercentRemaining == 5' >/dev/null \
-  || fail "schema 6 provider detail did not name the default account: $detail"
-out=$(QUOTA_AXI_SCHEMA6=1 QUOTA_AXI_COUNT="$COUNT" PATH="$FAKEBIN:$PATH" "$BIN/fm-procevent-quota.sh" poll --interval 1 --threshold 10 --provider codex --timeout 1)
-printf '%s\n' "$out" | grep -qx 'status: exhausted' || fail "expanded provider watch did not report the exhausted account"
-printf '%s\n' "$out" | grep -qx 'condition_polls: 1' || fail "expanded provider watch did not stop immediately"
-detail=$(printf '%s\n' "$out" | sed -n 's/^detail: //p')
-printf '%s\n' "$detail" | jq -e '
-  .provider == "codex" and
-  (.summary | length) == 2 and
-  all(.summary[]; .provider == "codex") and
-  ([.summary[] | select(.accountKey == "openai-codex") | .best.effectivePercentRemaining] == [3]) and
-  ([.summary[] | select(.accountKey == "openai-codex-work") | .best.runway.status] == ["exhausted_now"])
-' >/dev/null || fail "provider watch did not preserve independent account evidence: $detail"
-ok "provider watch classifies every matching account and preserves accountKey in details"
-
-out=$(QUOTA_AXI_SCHEMA5_PAIR=1 QUOTA_AXI_COUNT="$COUNT" PATH="$FAKEBIN:$PATH" "$BIN/fm-procevent-quota.sh" poll --interval 1 --threshold 10 --provider codex --timeout 1)
-printf '%s\n' "$out" | grep -qx 'status: low' || fail "schema 5 provider watch did not bind the keyless codex row"
-detail=$(printf '%s\n' "$out" | sed -n 's/^detail: //p')
-printf '%s\n' "$detail" | jq -e '.provider == "codex" and (has("accountKey") | not) and .best.effectivePercentRemaining == 3' >/dev/null \
-  || fail "schema 5 provider detail changed shape: $detail"
-ok "the same path still binds a schema 5 row by provider alone"
-
-rm -f "$COUNT"
-out=$(QUOTA_AXI_UNKNOWN_FIRST=1 QUOTA_AXI_COUNT="$COUNT" PATH="$FAKEBIN:$PATH" "$BIN/fm-procevent-quota.sh" poll --interval 0.01 --threshold 10 --provider codex --timeout 1)
-printf '%s\n' "$out" | grep -qx 'status: exhausted' || fail "unknown quota did not continue to exhaustion"
-printf '%s\n' "$out" | grep -qx 'condition_polls: 2' || fail "unknown quota stopped polling"
-ok "poll preserves provider-level unknown quota"
-
-rm -f "$COUNT"
-out=$(QUOTA_AXI_KNOWN_UNKNOWN_FIRST=1 QUOTA_AXI_COUNT="$COUNT" PATH="$FAKEBIN:$PATH" "$BIN/fm-procevent-quota.sh" poll --interval 0.01 --threshold 10 --provider codex --timeout 1)
-printf '%s\n' "$out" | grep -qx 'status: exhausted' || fail "known semantics with unknown headroom did not continue polling"
-printf '%s\n' "$out" | grep -qx 'condition_polls: 2' || fail "known semantics with unknown headroom stopped early"
-ok "poll preserves unknown headroom under known semantics"
+ok "poll rejects malformed aub snapshots"
 
 printf '# all fm-procevent-quota tests passed\n'

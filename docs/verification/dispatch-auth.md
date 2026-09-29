@@ -170,7 +170,7 @@ Observed source statuses are `available`, `expired` (with an `error` slug), and 
   The [eligibility procedure](../../.agents/skills/quota-array-dispatch/SKILL.md#1-eligibility) owns how missing authentication evidence affects dispatch.
 
 Neither this per-source shape nor `state.authStatus` exists before quota-axi 0.1.16.
-`bin/fm-bootstrap.sh` enforces the current compatibility floor through `bin/fm-quota-lib.sh`.
+Firstmate no longer reads this tool; [`bin/fm-quota-lib.sh`](../../bin/fm-quota-lib.sh) reads `aub status --format json` instead.
 
 Grok also reports `credits.remaining: 0` alongside `percentRemaining: 41` on a healthy account.
 That zero is a prepaid balance, not the subscription window, and is never headroom.
@@ -198,10 +198,10 @@ Re-run the two commands above and update this section and the pinned version tog
 ## Regression coverage
 
 `tests/fm-vendor-auth-probe.test.sh` drives the real script against a fake vendor CLI that records every invocation's argv and anything readable on stdin.
-It asserts that the script accepts no harness, model, or provider input, never calls `quota-axi`, exits alike for every probe result because it renders no verdict, invokes only the two fixed non-destructive argv forms with stdin closed, holds a real bound even when the configured bound is zero or malformed, and never echoes raw vendor output.
+It asserts that the script accepts no harness, model, or provider input, never calls `aub`, exits alike for every probe result because it renders no verdict, invokes only the two fixed non-destructive argv forms with stdin closed, holds a real bound even when the configured bound is zero or malformed, and never echoes raw vendor output.
 `tests/fm-spawn-dispatch-profile.test.sh` owns spawn's deterministic profile and harness refusals.
-`tests/fm-bootstrap.test.sh` owns the quota-axi version-floor diagnostic.
-`tests/fm-quota-array-dispatch-live-e2e.test.sh` drives the public Pi skill-loading interface against one fake schema-5 snapshot per case, served as quota-axi's default TOON.
-It covers TOON-first `spendPriority` ranking among candidates that pass eligibility, reasoning-class, and runway-feasibility gates, explicit accounting for unmeasurable runway, the strongest-reasoning constraint, and the runway feasibility floor over a higher `spendPriority`.
-`tests/fm-dispatch-resolve.test.sh`, `tests/fm-quota-choose.test.sh`, and `tests/fm-procevent-quota.test.sh` cover schema-6 account-row binding, account separation, and schema-5 compatibility through the public script interfaces.
-The skill's primary path is that default TOON; `--json` is the documented defensive fallback, and this section records the producer `--json` shape that fallback consumes.
+`tests/fm-bootstrap.test.sh` owns the `aub` compatibility diagnostic.
+`tests/fm-quota-array-dispatch-live-e2e.test.sh` drives the public Pi skill-loading interface against one fake `aub status --format json` snapshot per case.
+It covers reserve ranking between two accounts, a stale account yielding to a fresh one, and an `auth_required` account never being chosen.
+`tests/fm-quota-lib.test.sh`, `tests/fm-dispatch-resolve.test.sh`, `tests/fm-quota-choose.test.sh`, and `tests/fm-procevent-quota.test.sh` cover the account lookup, the ranking rule, and account separation through the public script interfaces.
+The quota-axi shapes recorded above are historical; the skill now reads one `aub status --format json` snapshot.

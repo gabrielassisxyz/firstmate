@@ -2,36 +2,38 @@
 # Quota-exhaustion process-event adapter.
 #
 # Usage:
-#   fm-procevent-quota.sh arm [--interval <secs>] [--threshold <percent>] [--provider <provider>]
-#   fm-procevent-quota.sh poll [--interval <secs>] [--threshold <percent>] [--provider <provider>] [--timeout <secs>]
+#   fm-procevent-quota.sh arm [--interval <secs>] [--threshold <percent>] [--account <account>]
+#   fm-procevent-quota.sh poll [--interval <secs>] [--threshold <percent>] [--account <account>] [--timeout <secs>]
 #   fm-procevent-quota.sh classify <result-file>
 #   fm-procevent-quota.sh terminal <result-file>
-#   fm-procevent-quota.sh source-id
-#   fm-procevent-quota.sh retire [--provider <provider>]
+#   fm-procevent-quota.sh source-id [<account>]
+#   fm-procevent-quota.sh retire [--account <account>]
 #
-# arm        Register a recurring quota-axi --json poll that wakes firstmate
-#            when the tracked provider's effectivePercentRemaining drops below
-#            <threshold> (default 10%) or when its runway.status becomes
-#            exhausted_now. The condition is deterministic, the action is only
-#            the durable `check: procevent:quota:<seq>` wake, and the watch is
-#            registered through `bin/fm-procevent.sh register`.
+# arm        Register a recurring `aub status --format json` poll that wakes
+#            firstmate when any window of a tracked account drops below
+#            <threshold> percent remaining (default 10%) or reaches 0%. The
+#            condition is deterministic, the action is only the durable
+#            `check: procevent:quota:<seq>` wake, and the watch is registered
+#            through `bin/fm-procevent.sh register`.
 # poll       The blocking child the generic runner executes; never run this
-#            directly in a conversational turn. It polls `quota-axi --json`
-#            until quota drops below the threshold or an error stops the watch.
+#            directly in a conversational turn. It polls `aub status --format
+#            json` until quota drops below the threshold or an error stops the
+#            watch.
 # classify   Print the captured outcome class: low, exhausted, error, or unknown.
 # terminal   Every quota poll is terminal because the source fires at most once.
 # source-id  Print the canonical source id.
-# retire     Stop the aggregate watch, or the matching provider watch when
-#            --provider is supplied, and retire the registration.
+# retire     Stop the aggregate watch, or the matching account watch when
+#            --account is supplied, and retire the registration.
 #
-# The canonical source id is `quota` for the aggregate tracked provider.
-# A provider named with --provider sets the tracked provider and the source id
-# becomes `quota-<provider>`.
+# The canonical source id is `quota` for the aggregate watch over every account
+# in the snapshot. An account named with --account (an aub account id) becomes
+# the only tracked account and the source id becomes `quota-<account>`.
 #
-# Snapshots may be quota-axi schema 5 or 6 (bin/fm-quota-lib.sh owns the
-# validator). Both watches read every matching account row independently,
-# without combining quotas. A --provider watch restricts those rows to the
-# requested provider; details preserve each row's accountKey when present.
+# bin/fm-quota-lib.sh owns the snapshot validator and the window arithmetic.
+# Every account is read independently, never combined. The aggregate watch
+# skips an auth_required account, since it has no current reading; a watch on
+# that one account reports error. Details name each account with its tightest
+# window.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -56,7 +58,7 @@ DEFAULT_THRESHOLD=10
 SOURCE_ID_BASE=quota
 
 CANONICAL_SOURCE_ID=
-PROVIDER=
+ACCOUNT=
 
 usage() {
   awk '
@@ -68,15 +70,15 @@ usage() {
 }
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
 
-resolve_provider() {
+resolve_account() {
   local LC_ALL=C
-  PROVIDER=${1:-}
-  if [ -n "$PROVIDER" ]; then
-    [[ "$PROVIDER" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || die "invalid provider: $PROVIDER"
-    CANONICAL_SOURCE_ID="$SOURCE_ID_BASE-$PROVIDER"
+  ACCOUNT=${1:-}
+  if [ -n "$ACCOUNT" ]; then
+    [[ "$ACCOUNT" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || die "invalid account: $ACCOUNT"
+    CANONICAL_SOURCE_ID="$SOURCE_ID_BASE-$ACCOUNT"
   else
     CANONICAL_SOURCE_ID=$SOURCE_ID_BASE
-    PROVIDER=
+    ACCOUNT=
   fi
   fm_procevent_source_id_valid "$CANONICAL_SOURCE_ID" || die "source id is not path-safe: $CANONICAL_SOURCE_ID"
 }
@@ -98,73 +100,51 @@ valid_percent() {
 }
 
 # quota_json [timeout]
-# Run `quota-axi --json` bounded by the given timeout. A missing or incompatible
-# quota-axi is an error condition, not a signal to fire.
+# One validated `aub status --format json` snapshot bounded by the timeout. A
+# missing aub or an invalid snapshot is an error condition, not a signal to fire.
 quota_json() {
-  local timeout=${1:-} output
-  if [ -n "$timeout" ]; then
-    fm_quota_axi_compatible "$timeout" >/dev/null 2>&1 || return 2
-    output=$(fm_run_timed "$timeout" quota-axi --json 2>/dev/null </dev/null) || return 2
-  else
-    fm_quota_axi_compatible >/dev/null 2>&1 || return 2
-    output=$(quota-axi --json 2>/dev/null </dev/null) || return 2
-  fi
-  printf '%s\n' "$output"
+  fm_quota_snapshot "${1:-}" || return 2
 }
 
-# condition_status <json> [provider] [threshold]
-# Print healthy, low, exhausted, or error for the tightest known applicable
-# quota scope.
+# condition_status <json> [account] [threshold]
+# Print healthy, low, exhausted, or error for the tightest window of the tracked
+# accounts.
 condition_status() {
-  local json=$1 provider=${2:-} threshold=${3:-$DEFAULT_THRESHOLD}
+  local json=$1 account=${2:-} threshold=${3:-$DEFAULT_THRESHOLD}
   printf '%s\n' "$json" | fm_quota_json_valid || { printf 'error\n'; return; }
-  printf '%s\n' "$json" | jq -r --arg provider "$provider" --arg threshold "$threshold" '
-    def classify($availability):
-      ($availability | map(select(.status == "known"))) as $known |
-      if ($availability | length) == 0 then "error"
-      elif any($availability[]; (.runway.status // "") == "exhausted_now") then "exhausted"
-      elif ($known | length) == 0 then "healthy"
-      elif any($known[]; .effectivePercentRemaining < ($threshold | tonumber)) then "low"
+  printf '%s\n' "$json" | jq -r --arg account "$account" --arg threshold "$threshold" "$FM_QUOTA_RANK_JQ"'
+    [.accounts[] | select($account == "" or .account == $account)] as $tracked |
+    if ($tracked | length) == 0 and $account != "" then "error"
+    elif $account != "" and any($tracked[]; .freshness == "auth_required") then "error"
+    else [$tracked[] | select(.freshness != "auth_required") | .windows[] | aub_remaining] as $pcts |
+      if ($pcts | length) == 0 then (if $account == "" then "healthy" else "error" end)
+      elif any($pcts[]; . <= 0) then "exhausted"
+      elif any($pcts[]; . < ($threshold | tonumber)) then "low"
       else "healthy"
-      end;
-    .providers |= map(select($provider == "" or .provider == $provider)) |
-    if (.providers | length) == 0 and $provider != "" then "error"
-    elif ([.providers[]?.quotaSemantics.effectiveAvailability[]?] | length) == 0 then "healthy"
-    else classify([.providers[]?.quotaSemantics.effectiveAvailability[]?])
+      end
     end
   ' 2>/dev/null || printf 'error\n'
 }
 
-# details <json> [provider]
+# details <json> [account]
 # Print a one-line summary of the quota state for the result document.
 details() {
-  local json=$1 provider=${2:-}
-  printf '%s\n' "$json" | jq -c --arg provider "$provider" '
-    def best_detail($availability):
-      ($availability | map(select(.status == "known"))) as $known |
-      ($availability | map(select((.runway.status // "") == "exhausted_now"))) as $exhausted |
-      if ($exhausted | length) > 0 then ($exhausted | min_by(.effectivePercentRemaining // 101))
-      elif ($known | length) > 0 then ($known | min_by(.effectivePercentRemaining))
-      else null
-      end;
-    [.providers[]? | select($provider == "" or .provider == $provider) |
-      {provider}
-      + (if has("accountKey") then {accountKey} else {} end)
-      + {best: best_detail(.quotaSemantics.effectiveAvailability // [])}
+  local json=$1 account=${2:-}
+  printf '%s\n' "$json" | jq -c --arg account "$account" "$FM_QUOTA_RANK_JQ"'
+    [.accounts[] | select($account == "" or .account == $account) |
+      {account, freshness,
+       tightest: ([.windows[] | {scope: aub_label, remaining: aub_remaining}] | min_by(.remaining))}
     ] as $summary |
-    if $provider == "" or ($summary | length) > 1 then
-      {
-        provider: (if $provider == "" then "aggregate" else $provider end),
-        summary: $summary
-      }
+    if $account == "" or ($summary | length) > 1 then
+      {account: (if $account == "" then "aggregate" else $account end), summary: $summary}
     else
-      $summary[0] // {provider: $provider, best: null}
+      $summary[0] // {account: $account, tightest: null}
     end
   ' 2>/dev/null
 }
 
 cmd_source_id() {
-  resolve_provider "${1-}"
+  resolve_account "${1-}"
   printf '%s\n' "$CANONICAL_SOURCE_ID"
 }
 
@@ -174,19 +154,20 @@ cmd_arm() {
     case "$1" in
       --interval)  positive_number "${2-}" || die "--interval needs a positive number"; interval=$2; shift 2 ;;
       --threshold) valid_percent "${2-}" || die "--threshold needs a percent 0-100"; threshold=$2; shift 2 ;;
-      --provider)  [ -n "${2-}" ] || die "--provider needs a value"; resolve_provider "$2"; shift 2 ;;
+      --account)   [ -n "${2-}" ] || die "--account needs a value"; resolve_account "$2"; shift 2 ;;
       *) usage ;;
     esac
   done
-  resolve_provider "$PROVIDER"
-  fm_quota_axi_compatible 5 >/dev/null 2>&1 || die "quota-axi is missing or below the compatibility floor"
+  resolve_account "$ACCOUNT"
+  local source_error
+  source_error=$(fm_quota_source_compatible 5 2>&1) || die "$source_error"
   local timeout
   timeout=$(perl -e 'print int($ARGV[0] * 0.8 + 0.5)' "$interval") || timeout=30
   [ "$timeout" -ge 5 ] || timeout=5
   "$SCRIPT_DIR/fm-procevent.sh" register quota "$CANONICAL_SOURCE_ID" \
-    -- "$SCRIPT_DIR/fm-procevent-quota.sh" poll --interval "$interval" --threshold "$threshold" --provider "$PROVIDER" --timeout "$timeout" || exit 1
+    -- "$SCRIPT_DIR/fm-procevent-quota.sh" poll --interval "$interval" --threshold "$threshold" --account "$ACCOUNT" --timeout "$timeout" || exit 1
   printf 'armed: %s\n' "$CANONICAL_SOURCE_ID"
-  printf 'provider: %s\n' "${PROVIDER:-(aggregate)}"
+  printf 'account: %s\n' "${ACCOUNT:-(aggregate)}"
   printf 'threshold: %s%%\n' "$threshold"
   printf 'interval: %ss\n' "$interval"
 }
@@ -200,7 +181,7 @@ cmd_poll() {
     case "$1" in
       --interval)  [ "$#" -ge 2 ] || die "--interval needs a positive number"; interval=$2; shift 2 ;;
       --threshold) [ "$#" -ge 2 ] || die "--threshold needs a percent 0-100"; threshold=$2; shift 2 ;;
-      --provider)  [ "$#" -ge 2 ] || die "--provider needs a value"; PROVIDER=$2; shift 2 ;;
+      --account)   [ "$#" -ge 2 ] || die "--account needs a value"; ACCOUNT=$2; shift 2 ;;
       --timeout)   [ "$#" -ge 2 ] || die "--timeout needs a positive integer"; timeout=$2; shift 2 ;;
       *) usage ;;
     esac
@@ -208,24 +189,24 @@ cmd_poll() {
   positive_number "$interval" || die "--interval needs a positive number"
   valid_percent "$threshold" || die "--threshold needs a percent 0-100"
   [ -z "$timeout" ] || positive_int "$timeout" || die "--timeout needs a positive integer"
-  resolve_provider "$PROVIDER"
+  resolve_account "$ACCOUNT"
   local json detail status polls=0
   while :; do
     polls=$((polls + 1))
     if ! json=$(quota_json "${timeout:-}"); then
       printf 'quota: %s\n' "$CANONICAL_SOURCE_ID"
       printf 'status: error\n'
-      printf 'detail: quota-axi --json failed or quota-axi is missing/incompatible\n'
+      printf 'detail: aub status --format json failed, or aub is missing or answered an invalid snapshot\n'
       printf 'condition_polls: %s\n' "$polls"
       exit 0
     fi
-    status=$(condition_status "$json" "$PROVIDER" "$threshold")
+    status=$(condition_status "$json" "$ACCOUNT" "$threshold")
     case "$status" in
       healthy) sleep "$interval"; continue ;;
       low|exhausted) : ;;
       *) status=error ;;
     esac
-    detail=$(details "$json" "$PROVIDER")
+    detail=$(details "$json" "$ACCOUNT")
     printf 'quota: %s\n' "$CANONICAL_SOURCE_ID"
     printf 'status: %s\n' "$status"
     printf 'detail: %s\n' "$detail"
@@ -256,15 +237,15 @@ cmd_terminal() {
 }
 
 cmd_retire() {
-  local id provider=
+  local id account=
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      --provider) [ -n "${2-}" ] || die "--provider needs a value"; provider=$2; shift 2 ;;
+      --account) [ -n "${2-}" ] || die "--account needs a value"; account=$2; shift 2 ;;
       -*) usage ;;
-      *) [ -z "$provider" ] || usage; provider=$1; shift ;;
+      *) [ -z "$account" ] || usage; account=$1; shift ;;
     esac
   done
-  resolve_provider "$provider"
+  resolve_account "$account"
   id=$CANONICAL_SOURCE_ID
   "$SCRIPT_DIR/fm-procevent.sh" retire "$id"
 }
