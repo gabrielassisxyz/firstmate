@@ -477,6 +477,40 @@ if find "$TMP_ROOT" -maxdepth 1 -name '.fm-home-provisioning.*' -print -quit | g
   fail "appeared-home provisioning left staging litter beside the home"
 fi
 pass "a home that appears mid-provision makes the provision die without touching it"
+
+# The code root is a live checkout whose auto maintenance may repack it at any
+# moment, so the home clone must not copy its object files one by one: a loose
+# object deleted between listing and copy fails such a copy. An unreadable
+# fan-out directory holding only an unreachable object stands in for that
+# deletion deterministically - a file-by-file copy trips on it, while a clone
+# through git's transport reads only reachable objects by lookup.
+stray_dir=
+for stray in $(seq 1 4096); do
+  stray_oid=$(printf 'unreachable stray %s\n' "$stray" | git -C "$REMOTE_ROOT" hash-object --stdin)
+  [ -e "$REMOTE_ROOT/.git/objects/${stray_oid:0:2}" ] && continue
+  printf 'unreachable stray %s\n' "$stray" | git -C "$REMOTE_ROOT" hash-object -w --stdin >/dev/null
+  stray_dir="$REMOTE_ROOT/.git/objects/${stray_oid:0:2}"
+  break
+done
+[ -n "$stray_dir" ] && [ -d "$stray_dir" ] || fail "could not place an unreachable object in its own fan-out directory"
+if [ "$(id -u)" = 0 ]; then
+  pass "provisioning clones the code root through git's transport (skipped as root, which reads any directory)"
+else
+  chmod 000 "$stray_dir"
+  repack_rc=0
+  FM_HOME="$TMP_ROOT/repacking-home" FM_ROOT_OVERRIDE="$REMOTE_ROOT" \
+    "$REMOTE_ROOT/bin/fm-remote-home-provision.sh" < "$TMP_ROOT/race.manifest" \
+    > "$TMP_ROOT/repacking-provision.out" 2>&1 || repack_rc=$?
+  chmod 755 "$stray_dir"
+  [ "$repack_rc" -eq 0 ] \
+    || { sed 's/^/repacking-provision: /' "$TMP_ROOT/repacking-provision.out"; fail "provisioning copied the code root's object files instead of cloning through git's transport"; }
+  if [ "$(cat "$TMP_ROOT/repacking-home/.fm-secondmate-home")" != race ] \
+    || [ "$(git -C "$TMP_ROOT/repacking-home" rev-parse HEAD)" != "$(git -C "$REMOTE_ROOT" rev-parse HEAD)" ] \
+    || ! git -C "$TMP_ROOT/repacking-home" fsck --full --no-progress >/dev/null 2>&1; then
+    fail "provisioning through git's transport published an incomplete home"
+  fi
+  pass "provisioning clones the code root through git's transport, so a concurrent repack cannot fail it"
+fi
 if [ "${FM_TEST_PROVISION_ONLY:-0}" = 1 ]; then
   echo "ALL TESTS PASSED"
   exit 0
