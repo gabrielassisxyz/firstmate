@@ -66,6 +66,11 @@
 # A gh lookup error falls back to the content check; if that is also inconclusive,
 # teardown refuses rather than risk discarding unlanded work.
 # Uncommitted changes are never landed.
+# A ship that is not local-only and records pr= has one more gate, ahead of all of
+# the above: the forge must report that PR merged, because the backlog close
+# records it as the landing and a pushed branch lands nothing. An open, closed, or
+# unreadable PR refuses before any cleanup; --force alone skips it
+# (recorded_pr_is_merged below).
 # local-only projects additionally accept work merged into the local default
 # branch (firstmate performs that merge after configured approval) as a fallback
 # for the common case where there is no remote at all.
@@ -1585,6 +1590,25 @@ content_in_default() {
   merged_tree=$(git -C "$WT" merge-tree --write-tree "$ref" HEAD 2>/dev/null) || return 1
   merged_tree=$(printf '%s\n' "$merged_tree" | head -1)
   [ "$merged_tree" = "$default_tree" ]
+}
+
+# A recorded PR is the ship's claim of where its work lands, and the backlog close
+# records that PR as the landing. A pushed branch protects the commits but lands
+# nothing, so a ship whose recorded PR the forge does not report as merged has not
+# landed, however reachable its commits are. Prints one line naming the PR and
+# its reported state, or the read failure, when it has not.
+recorded_pr_is_merged() {
+  local out state
+  if ! out=$(gh pr view "$PR_URL" --json state -q .state 2>&1); then
+    echo "REFUSED: cannot verify that PR $PR_URL is merged: forge read failed: $(printf '%s\n' "$out" | head -1)" >&2
+    return 1
+  fi
+  state=$(printf '%s\n' "$out" | tail -1)
+  case "$state" in
+    MERGED|merged) return 0 ;;
+  esac
+  echo "REFUSED: PR $PR_URL is ${state:-in an unreported state}, not merged; land it, or get the captain's explicit OK to discard, then --force." >&2
+  return 1
 }
 
 # Has the worktree's committed work actually LANDED, though its commits are not
@@ -3437,6 +3461,10 @@ fi
 X_REQUEST=$(grep '^x_request=' "$META" 2>/dev/null | tail -1 | cut -d= -f2- || true)
 if [ -n "$X_REQUEST" ]; then
   echo "warning: task $ID still carries an unreconciled Relay request link ($X_REQUEST) on its task record." >&2
+fi
+
+if [ "$KIND" = ship ] && [ "$MODE" != local-only ] && [ -n "$PR_URL" ] && [ "$FORCE" != "--force" ]; then
+  recorded_pr_is_merged || exit 1
 fi
 
 if [ "$BACKEND" = orca ] && [ "$KIND" != scout ] && [ "$KIND" != secondmate ] && [ "$FORCE" != "--force" ]; then

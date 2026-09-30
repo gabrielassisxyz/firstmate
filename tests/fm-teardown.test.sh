@@ -106,10 +106,23 @@ case "${1:-} ${2:-}" in
 esac
 exit 0
 SH
+  # The recorded-PR merge read (`--json state` alone) answers
+  # FM_FAKE_GH_PR_STATE, MERGED by default, so a case that records pr= stands
+  # for a landed PR unless it says otherwise; FM_FAKE_GH_PR_STATE=error makes
+  # that read fail. Every other PR view still finds no PR.
   cat > "$fakebin/gh" <<'SH'
 #!/usr/bin/env bash
 case "${1:-} ${2:-}" in
-  "pr view") echo "error: pull request not found" >&2 ; exit 1 ;;
+  "pr view")
+    case " $* " in
+      *" --json state "*)
+        if [ "${FM_FAKE_GH_PR_STATE:-MERGED}" = error ]; then
+          echo "error: could not resolve to a PullRequest: forge unreachable" >&2
+          exit 1
+        fi
+        printf '%s\n' "${FM_FAKE_GH_PR_STATE:-MERGED}" ; exit 0 ;;
+    esac
+    echo "error: pull request not found" >&2 ; exit 1 ;;
 esac
 exit 0
 SH
@@ -264,6 +277,7 @@ SH
 case "\${1:-} \${2:-}" in
   "pr view")
     case " \$* " in
+      *" --json state "*) printf '%s\n' MERGED ; exit 0 ;;
       *"state,headRefOid,url"*) printf '%s\t%s\t%s\n' 'MERGED' '$head' 'https://github.com/example/repo/pull/7' ; exit 0 ;;
       *"headRefOid"*) printf '%s\n' '$head' ; exit 0 ;;
     esac
@@ -725,6 +739,101 @@ test_teardown_closes_the_backlog_item_itself() {
   printf '%s\n' "$out" | grep -F 'Run tasks-axi done' >/dev/null \
     && fail "teardown still asked a later turn to close the item it already closed: $out"
   pass "teardown closes its own backlog item before reporting success"
+}
+
+# A ship whose recorded PR the forge does not report merged has not landed, even
+# with its branch pushed: teardown refuses before touching the copy or the item.
+# Args: case_dir label forge-state expected-line
+assert_unmerged_pr_refuses() {
+  local case_dir=$1 label=$2 forge_state=$3 expected=$4 rc head lines
+  write_meta "$case_dir" direct-PR ship
+  append_pr_meta_url "$case_dir"
+  wt_commit_file "$case_dir" feature.txt pushed "pushed work"
+  add_fork_with_pushed_branch "$case_dir"
+  head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  seed_backlog_in_flight "$case_dir"
+  cp "$case_dir/data/backlog.md" "$case_dir/backlog.before"
+
+  set +e
+  FM_FAKE_GH_PR_STATE=$forge_state run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  [ "$rc" -ne 0 ] || fail "$label: teardown succeeded while the recorded PR was not merged"
+  lines=$(grep -c '^REFUSED' "$case_dir/stderr" || true)
+  [ "$lines" = 1 ] || fail "$label: expected one REFUSED line, got $lines: $(cat "$case_dir/stderr")"
+  grep -Fx "$expected" "$case_dir/stderr" >/dev/null \
+    || fail "$label: refusal did not name the PR and its state: $(cat "$case_dir/stderr")"
+  [ -d "$case_dir/wt" ] || fail "$label: refusal removed the worktree"
+  [ "$(git -C "$case_dir/wt" rev-parse HEAD)" = "$head" ] \
+    || fail "$label: refusal moved the task branch"
+  [ -e "$case_dir/state/task-x1.meta" ] || fail "$label: refusal erased the task record"
+  assert_absent "$case_dir/state/task-x1.backlog-close" \
+    "$label: refusal recorded a pending backlog close"
+  cmp -s "$case_dir/backlog.before" "$case_dir/data/backlog.md" \
+    || fail "$label: refusal touched the backlog item"
+  [ "$(backlog_row_state "$case_dir")" = in_flight ] \
+    || fail "$label: backlog item left In flight: $(backlog_row_state "$case_dir")"
+}
+
+test_open_recorded_pr_refuses_even_when_pushed() {
+  local case_dir
+  case_dir=$(make_case recorded-pr-open)
+  assert_unmerged_pr_refuses "$case_dir" "open PR" OPEN \
+    "REFUSED: PR https://github.com/example/repo/pull/7 is OPEN, not merged; land it, or get the captain's explicit OK to discard, then --force."
+  pass "a pushed ship whose recorded PR is open refuses teardown and keeps its backlog item open"
+}
+
+test_unreadable_recorded_pr_refuses() {
+  local case_dir
+  case_dir=$(make_case recorded-pr-unreadable)
+  assert_unmerged_pr_refuses "$case_dir" "unreadable PR" error \
+    "REFUSED: cannot verify that PR https://github.com/example/repo/pull/7 is merged: forge read failed: error: could not resolve to a PullRequest: forge unreachable"
+  pass "a ship whose recorded PR the forge cannot read refuses teardown rather than assuming merged"
+}
+
+test_merged_recorded_pr_closes_with_its_url() {
+  local case_dir
+  case_dir=$(make_case recorded-pr-merged)
+  write_meta "$case_dir" direct-PR ship
+  append_pr_meta_url "$case_dir"
+  wt_commit_file "$case_dir" feature.txt pushed "pushed work"
+  add_fork_with_pushed_branch "$case_dir"
+  seed_backlog_in_flight "$case_dir"
+
+  FM_FAKE_GH_PR_STATE=MERGED run_teardown "$case_dir" >/dev/null 2>"$case_dir/stderr" \
+    || fail "merged PR: teardown refused: $(cat "$case_dir/stderr")"
+  [ "$(backlog_row_state "$case_dir")" = "done" ] \
+    || fail "merged PR: backlog item not closed: $(backlog_row_state "$case_dir")"
+  assert_grep 'https://github.com/example/repo/pull/7' "$case_dir/data/backlog.md" \
+    "merged PR: close did not record the PR URL"
+  pass "a ship whose recorded PR is merged tears down and closes with the PR URL"
+}
+
+test_forced_discard_ignores_open_recorded_pr() {
+  local case_dir
+  case_dir=$(make_case recorded-pr-open-forced)
+  write_meta "$case_dir" direct-PR ship
+  append_pr_meta_url "$case_dir"
+  wt_commit_file "$case_dir" feature.txt pushed "pushed work"
+  add_fork_with_pushed_branch "$case_dir"
+
+  FM_FAKE_GH_PR_STATE=OPEN run_teardown "$case_dir" --force >/dev/null 2>"$case_dir/stderr" \
+    || fail "forced discard: teardown refused an open PR under --force: $(cat "$case_dir/stderr")"
+  assert_absent "$case_dir/state/task-x1.meta" "forced discard: task record survived"
+  pass "--force still discards a ship whose recorded PR is open"
+}
+
+test_local_only_ignores_open_recorded_pr() {
+  local case_dir
+  case_dir=$(make_case recorded-pr-local-only)
+  write_meta "$case_dir" local-only ship
+  append_pr_meta_url "$case_dir"
+
+  FM_FAKE_GH_PR_STATE=OPEN run_teardown "$case_dir" >/dev/null 2>"$case_dir/stderr" \
+    || fail "local-only: teardown consulted a recorded PR: $(cat "$case_dir/stderr")"
+  assert_absent "$case_dir/state/task-x1.meta" "local-only: task record survived"
+  pass "a local-only ship tears down without consulting a recorded PR"
 }
 
 test_teardown_manual_backend_leaves_the_backlog_to_the_operator() {
@@ -4252,6 +4361,11 @@ test_forced_secondmate_own_missing_adapter_sibling_refuses_before_child_cleanup
 test_retained_sources_still_reach_the_ordinary_refusal
 test_local_only_fork_remote_allows
 test_teardown_closes_the_backlog_item_itself
+test_open_recorded_pr_refuses_even_when_pushed
+test_unreadable_recorded_pr_refuses
+test_merged_recorded_pr_closes_with_its_url
+test_forced_discard_ignores_open_recorded_pr
+test_local_only_ignores_open_recorded_pr
 test_teardown_manual_backend_leaves_the_backlog_to_the_operator
 test_local_only_truly_unpushed_refuses
 test_local_only_merged_to_local_main_allows
