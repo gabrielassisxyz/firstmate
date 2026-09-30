@@ -31,7 +31,15 @@ make_home() {  # <name>
 ## Done
 EOF
   fakebin=$(fm_fakebin "$home")
-  fm_fake_exit0 "$fakebin" tmux treehouse no-mistakes gh gh-axi
+  fm_fake_exit0 "$fakebin" tmux treehouse no-mistakes gh-axi
+  # A case that records pr= models landed work, so the forge reports it merged
+  # when teardown reads the recorded PR's state.
+  cat > "$fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+case " $* " in *" pr view "*" --json state "*) printf '%s\n' MERGED ;; esac
+exit 0
+SH
+  chmod +x "$fakebin/gh"
   printf '%s\n' "$home"
 }
 
@@ -109,6 +117,7 @@ case "${1:-} ${2:-}" in
         printf '%s\n' '{"state":"OPEN","isDraft":false,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","headRefOid":"1111111111111111111111111111111111111111","baseRefName":"main","statusCheckRollup":[{"__typename":"CheckRun","name":"ci","status":"COMPLETED","conclusion":"SUCCESS"}]}'
         ;;
       *headRefOid*) printf '%s\n' 1111111111111111111111111111111111111111 ;;
+      *" --json state "*) printf '%s\n' MERGED ;;
     esac
     ;;
   "pr merge") printf 'merged:\n  number: %s\n  status: ok\n' "${3:-}" ;;

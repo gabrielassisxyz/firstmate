@@ -348,7 +348,15 @@ done
 TD_ROOT="$TMP_ROOT/teardown"
 mkdir -p "$TD_ROOT"
 TD_BIN=$(fm_fakebin "$TD_ROOT")
-fm_fake_exit0 "$TD_BIN" treehouse tmux gh no-mistakes
+fm_fake_exit0 "$TD_BIN" treehouse tmux no-mistakes
+# The teardown case records pr= for landed work, so the forge reports it merged
+# when teardown reads the recorded PR's state.
+cat > "$TD_BIN/gh" <<'SH'
+#!/usr/bin/env bash
+case " $* " in *" pr view "*" --json state "*) printf '%s\n' MERGED ;; esac
+exit 0
+SH
+chmod +x "$TD_BIN/gh"
 cat > "$TD_BIN/gh-axi" <<'SH'
 #!/usr/bin/env bash
 case "${1:-} ${2:-}" in

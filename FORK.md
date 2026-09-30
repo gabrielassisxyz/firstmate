@@ -52,6 +52,7 @@ The rest of `AGENTS.md` is upstream's contract and stays as upstream wrote it. T
 | `tests/fm-spawn-dispatch-profile.test.sh`, `tests/fm-secondmate-harness.test.sh`, `tests/fm-backend-orca.test.sh` | the expected Claude settings JSON carries `disabledMcpjsonServers` | the suites pin the launch line that carries it |
 | `bin/fm-teardown.sh` | a ship that is not local-only and records `pr=` refuses teardown, without `--force`, unless the forge reports that PR merged (`recorded_pr_is_merged`), naming the PR and its state or the read failure | a pushed branch counted as landed, so a ship whose PR was still open and conflicted was torn down and its backlog item closed as landed on that PR |
 | `tests/fm-teardown.test.sh` | the fake `gh` answers the recorded-PR merge read from `FM_FAKE_GH_PR_STATE` (merged by default), and cases for an open, unreadable, and merged PR, a forced discard, and a local-only ship | the regression for the recorded-PR merge gate |
+| `tests/fm-captain-hold-lifecycle.test.sh`, `tests/fm-backlog-atomicity.test.sh`, `tests/fm-br-backlog.test.sh` | the fake `gh` reports a recorded PR merged when teardown reads its state | these fixtures record `pr=` for landed work and tear it down, which the merge gate now checks with the forge |
 | `.github/workflows/ci.yml` | both Pi installs pin `@earendil-works/pi-coding-agent@0.87.1` | Pi 0.99 changed its stock tool rendering and the Pi extension tests fail against it; an unpinned install turned every pull request red on the day it was published |
 
 ## Fork-owned files
