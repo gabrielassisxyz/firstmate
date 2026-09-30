@@ -3957,7 +3957,7 @@ spawn_send_key() { # <target> <key>
 # launch boundary and makes a dropped or ignored cwd change a refusal.
 spawn_enter_recorded_worktree() {
   [ "$KIND" = secondmate ] && return 0
-  spawn_send_text_line "$WT_TARGET" "cd -- $(shell_quote "$WT")" || {
+  spawn_send_text_line "$WT_TARGET" "builtin cd -- $(shell_quote "$WT")" || {
     echo "error: task $ID's endpoint could not be moved into its recorded worktree '$WT'; refusing to launch outside the copy holding its work" >&2
     exit 1
   }
@@ -4296,7 +4296,7 @@ elif [ "$RELAUNCH" -eq 1 ]; then
       exit 1
     fi
     relaunch_cd_path=${WT//\'/\'\\\'\'}
-    spawn_send_text_line "$WT_TARGET" "cd -- '$relaunch_cd_path'" || {
+    spawn_send_text_line "$WT_TARGET" "builtin cd -- '$relaunch_cd_path'" || {
       echo "error: task $ID's endpoint is in '${relaunch_seen:-unknown}' and could not be told to return to its recorded worktree '$WT'; refusing to relaunch an agent outside the copy holding its work" >&2
       exit 1
     }
