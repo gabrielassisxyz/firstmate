@@ -7,7 +7,7 @@
 # and GitHub reports a PR head that contains the current local work, or its content
 # is already in the up-to-date default branch.
 #
-# Covers three fixes:
+# Covers four fixes:
 #   - local-only fork-remote: a fork IS a remote, so fork-pushed upstream-
 #     contribution PRs are teardown-eligible (the pre-fix code false-refused them).
 #   - squash-merge-then-delete-branch: the branch's own commits live nowhere on a
@@ -19,6 +19,14 @@
 #     git index.lock that blocks teardown. The return path retries on the lock
 #     error signature (even if the lock self-clears mid-check), then only removes a
 #     provably stale lock before re-running safety checks.
+#   - teardown-slot-symlink: treehouse records each pool slot under the path
+#     spelling in effect when the slot was created, and compares spellings, not
+#     directories. A session that reaches the pool through a symbolic link left
+#     two spellings of one directory - treehouse's link-path recording of the slot
+#     and Firstmate's resolved worktree= spelling - and the return failed with
+#     "not managed by treehouse", stranding the slot out of its pool. The return
+#     now re-spells the path from treehouse's own slot listing when that listing
+#     resolves to the same directory.
 #
 # Matrix:
 #   (a) local-only + HEAD on a fork remote-tracking branch     -> ALLOW  (fork fix)
@@ -53,6 +61,12 @@
 #   (w) index.lock mtime read failure                         -> lock kept, REFUSE
 #   (x) transient lock cleared after first failed return      -> retry ALLOW
 #   (y) persistent lock (never clears, not provably stale)    -> REFUSE loudly
+#
+# Also covers the symbolic-link slot alias inside teardown_treehouse_return:
+#   (z) treehouse recorded the slot under a symlinked-parent spelling, the task
+#       record holds the resolved path -> ALLOW (returns treehouse's spelling)
+#   (aa) identical spellings                         -> ALLOW (one return, no listing)
+#   (ab) no recorded slot resolves to the task's path -> aborts loudly as before
 set -u
 
 # shellcheck source=tests/lib.sh disable=SC1091
@@ -532,6 +546,43 @@ if [ "${1:-}" = return ]; then
   fi
   echo "fatal: Unable to create '$lock': File exists." >&2
   exit 128
+fi
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/treehouse"
+}
+
+# A fake treehouse whose managed-path check compares the requested spelling
+# against its own recorded slot path exactly like the real tool, so only
+# treehouse's exact spelling succeeds; `status --json` answers from
+# TREEHOUSE_STATUS_JSON. Return attempts are appended (one path per line) to
+# TREEHOUSE_RETURN_LOG and status consultations to TREEHOUSE_STATUS_LOG, so a
+# test can prove which spelling was used and how often the listing ran - and
+# that the identical-spelling case never consults the listing at all.
+add_string_comparing_treehouse() {
+  local case_dir=$1
+  cat > "$case_dir/fakebin/treehouse" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = status ] && [ "${2:-}" = --json ]; then
+  [ -z "${TREEHOUSE_STATUS_LOG:-}" ] || printf 'status\n' >> "$TREEHOUSE_STATUS_LOG"
+  printf '%s\n' "${TREEHOUSE_STATUS_JSON:-[]}"
+  exit 0
+fi
+if [ "${1:-}" = return ]; then
+  shift
+  wt=""
+  for a in "$@"; do
+    case "$a" in
+      --force) ;;
+      *) wt=$a ;;
+    esac
+  done
+  [ -z "${TREEHOUSE_RETURN_LOG:-}" ] || printf '%s\n' "$wt" >> "$TREEHOUSE_RETURN_LOG"
+  if [ "$wt" = "${TREEHOUSE_SLOT_RECORD:-}" ]; then
+    exit 0
+  fi
+  echo "error: worktree $wt is not managed by treehouse" >&2
+  exit 1
 fi
 exit 0
 SH
@@ -2071,6 +2122,133 @@ test_fractional_legacy_retry_wait_refuses_without_arithmetic_error() {
   assert_not_contains "$(cat "$case_dir/stderr")" "syntax error" \
     "fractional-legacy-retry-wait: teardown hit an arithmetic error"
   pass "fractional legacy retry wait remains supported without arithmetic"
+}
+
+test_symlink_spelling_of_same_slot_returns() {
+  local case_dir rc wt alias_spelling return_log status_log
+  case_dir=$(make_case symlink-slot-alias)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit "$case_dir" "shippable work"
+  git -C "$case_dir/wt" push -q origin fm/task-x1
+  git -C "$case_dir/project" fetch -q origin
+
+  # The session reaches the pool through a symbolic link, so treehouse recorded
+  # the slot under the link spelling while Firstmate's record holds the resolved
+  # path (measured on the kernl pool 2026-10-02). The link parent here makes
+  # $case_dir/treehome/wt resolve to exactly $case_dir/wt.
+  ln -s . "$case_dir/treehome"
+  wt=$case_dir/wt
+  alias_spelling=$case_dir/treehome/wt
+
+  # A second, existing but unrelated slot in the listing proves the match is
+  # chosen by resolved directory, not by position or order.
+  mkdir "$case_dir/other-slot"
+  add_string_comparing_treehouse "$case_dir"
+  return_log=$case_dir/treehouse-returns
+  status_log=$case_dir/treehouse-statuses
+  : > "$return_log"
+  : > "$status_log"
+
+  set +e
+  TREEHOUSE_SLOT_RECORD="$alias_spelling" \
+  TREEHOUSE_STATUS_JSON=$(printf '%s' "[{\"name\":\"2\",\"path\":\"$case_dir/other-slot\",\"status\":\"available\"},{\"name\":\"3\",\"path\":\"$alias_spelling\",\"status\":\"in-use\"}]") \
+  TREEHOUSE_RETURN_LOG="$return_log" \
+  TREEHOUSE_STATUS_LOG="$status_log" \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "slot-symlink: teardown should return the slot through treehouse's spelling"
+  assert_no_grep "treehouse return failed" "$case_dir/stderr" \
+    "slot-symlink: teardown still failed to return the slot"
+  [ "$(wc -l < "$return_log")" = 2 ] \
+    || fail "slot-symlink: expected one failed attempt then the alias attempt, got: $(cat "$return_log")"
+  assert_equals "$wt" "$(sed -n 1p "$return_log")" \
+    "slot-symlink: first attempt should use the recorded resolved path"
+  assert_equals "$alias_spelling" "$(sed -n 2p "$return_log")" \
+    "slot-symlink: second attempt should use treehouse's link spelling"
+  [ "$(wc -l < "$status_log")" = 1 ] \
+    || fail "slot-symlink: expected exactly one pool listing, got $(cat "$status_log")"
+  assert_grep "reached through a symbolic link" "$case_dir/stderr" \
+    "slot-symlink: teardown did not explain the re-spelling"
+  pass "treehouse slot recorded under a symlinked-parent spelling is returned through treehouse's own record"
+}
+
+test_identical_spellings_return_once_without_listing() {
+  local case_dir rc return_log status_log
+  case_dir=$(make_case symlink-slot-identity)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit "$case_dir" "shippable work"
+  git -C "$case_dir/wt" push -q origin fm/task-x1
+  git -C "$case_dir/project" fetch -q origin
+
+  add_string_comparing_treehouse "$case_dir"
+  return_log=$case_dir/treehouse-returns
+  status_log=$case_dir/treehouse-statuses
+  : > "$return_log"
+  : > "$status_log"
+
+  set +e
+  TREEHOUSE_SLOT_RECORD="$case_dir/wt" \
+  TREEHOUSE_RETURN_LOG="$return_log" \
+  TREEHOUSE_STATUS_LOG="$status_log" \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "slot-identity: teardown should succeed for identical spellings"
+  [ "$(wc -l < "$return_log")" = 1 ] \
+    || fail "slot-identity: expected exactly one return attempt, got: $(cat "$return_log")"
+  assert_equals "$case_dir/wt" "$(sed -n 1p "$return_log")" \
+    "slot-identity: the single attempt should use the recorded path unchanged"
+  [ ! -s "$status_log" ] \
+    || fail "slot-identity: the pool listing was consulted although the first return succeeded"
+  pass "identical spellings keep today's single-return behavior with no pool listing"
+}
+
+test_unresolvable_recorded_path_still_aborts() {
+  local case_dir rc return_log status_log
+  case_dir=$(make_case symlink-slot-nomatch)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit "$case_dir" "shippable work"
+  git -C "$case_dir/wt" push -q origin fm/task-x1
+  git -C "$case_dir/project" fetch -q origin
+
+  ln -s . "$case_dir/treehome"
+  # The fake's own record names a nonexistent sibling path and the listing holds
+  # one existing but unrelated slot: no entry resolves to the task's recorded
+  # path, so the alias search must find nothing and teardown must abort with
+  # today's error, having attempted the return exactly once.
+  mkdir "$case_dir/other-slot"
+  add_string_comparing_treehouse "$case_dir"
+  return_log=$case_dir/treehouse-returns
+  status_log=$case_dir/treehouse-statuses
+  : > "$return_log"
+  : > "$status_log"
+
+  set +e
+  TREEHOUSE_SLOT_RECORD="$case_dir/treehome/elsewhere/9/not-the-task" \
+  TREEHOUSE_STATUS_JSON=$(printf '%s' "[{\"name\":\"9\",\"path\":\"$case_dir/other-slot\",\"status\":\"available\"}]") \
+  TREEHOUSE_RETURN_LOG="$return_log" \
+  TREEHOUSE_STATUS_LOG="$status_log" \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "slot-nomatch: teardown should abort when no slot resolves to the path"
+  assert_grep "error: treehouse return failed for worktree $case_dir/wt; teardown aborted" "$case_dir/stderr" \
+    "slot-nomatch: teardown did not abort with the existing error"
+  [ "$(wc -l < "$return_log")" = 1 ] \
+    || fail "slot-nomatch: expected exactly one return attempt, got: $(cat "$return_log")"
+  assert_equals "$case_dir/wt" "$(sed -n 1p "$return_log")" \
+    "slot-nomatch: the only attempt should use the recorded path"
+  [ "$(wc -l < "$status_log")" = 1 ] \
+    || fail "slot-nomatch: expected exactly one pool listing, got $(cat "$status_log")"
+  assert_present "$case_dir/state/task-x1.meta" \
+    "slot-nomatch: teardown erased the durable task record"
+  assert_present "$case_dir/wt" \
+    "slot-nomatch: teardown removed the worktree through the failed return"
+  pass "a recorded path no treehouse slot resolves to still aborts loudly without a return"
 }
 
 test_local_only_force_overrides_unpushed() {
@@ -4428,6 +4606,9 @@ test_transient_index_lock_clears_after_first_attempt_and_retry_succeeds
 test_persistent_index_lock_exhausts_retries_and_refuses_loudly
 test_empty_retry_wait_uses_default_without_aborting
 test_fractional_legacy_retry_wait_refuses_without_arithmetic_error
+test_symlink_spelling_of_same_slot_returns
+test_identical_spellings_return_once_without_listing
+test_unresolvable_recorded_path_still_aborts
 test_parked_own_run_is_aborted_before_teardown
 test_parked_own_run_concludes_on_passed_with_override_after_abort
 test_parked_own_run_concludes_on_passed_with_skips_after_abort
