@@ -223,7 +223,10 @@
 #      attempts. Retries key off the error text, not whether the lock file still
 #      exists after the failed attempt - a lock that self-clears mid-check still
 #      deserves a retry of the return.
-#   2. Other treehouse return failures still abort immediately and loudly (no retry).
+#   2. A different signature - the symbolic-link slot alias below, where the same
+#      directory answers "not managed" under a different spelling - gets exactly
+#      one re-spelled return attempt, not a wait-and-retry. Every other treehouse
+#      return failure still aborts immediately and loudly (no retry).
 #   3. If every retry still hits the lock signature and the lock remains, it is removed
 #      and the return tried once more ONLY when the lock is provably stale per
 #      bin/fm-lock-lib.sh's fm_lock_is_provably_stale, passing the worktree dir as the
@@ -238,6 +241,26 @@
 # is present; teardown clears only a provably stale lock, then re-runs the safety
 # checks before any destructive return. Teardown output notes every wait, retry, and
 # removal so the operator can see what happened.
+#
+# Symbolic-link slot alias (teardown-slot-symlink): treehouse records each pool
+# slot under the path spelling in effect when the slot was created, and its
+# managed-path check compares the requested spelling, not the resolved directory.
+# A session that reaches the pool through a symbolic link - for example a home
+# whose .treehouse is a symbolic link to another directory (observed on the kernl
+# pool, 2026-10-02) - can leave treehouse's recorded spelling and Firstmate's
+# recorded worktree= spelling different for one and the same directory, and the
+# return then answers "worktree <path> is not managed by treehouse" for a slot
+# treehouse does manage. Landing is unaffected; only the cleanup fails, so the
+# slot never goes back to its pool and every re-run fails the same way.
+# On that failure signature only, teardown_treehouse_return asks treehouse for
+# the slot paths it currently records (`treehouse status --json`, run from the
+# same pool-resolving directory as the return itself) and, when a recorded path
+# resolves to the same directory as the requested path, retries the return with
+# treehouse's own spelling. The landed-work, slot-exclusivity, and slot-owner
+# checks above already ran against the canonical directory, so the alias return
+# hands back exactly the slot those checks cleared and nothing else changes: an
+# unusable listing, or no recorded path resolving to the requested directory,
+# aborts loudly as before, and identical spellings never reach the listing.
 #
 # Pre-teardown cleanup sequence (runs once every landed/discard-work safety
 # refusal above has already passed, and BEFORE any worktree return, branch
@@ -1770,6 +1793,40 @@ treehouse_return_is_index_lock_error() {
   printf '%s\n' "$text" | grep -Eq "Unable to create ['\"].*index\\.lock['\"]: File exists"
 }
 
+# True when treehouse answers that the requested path is not managed ("worktree
+# <path> is not managed by treehouse", the real binary's wording) - including the
+# symbolic-link slot alias case, where the same directory is managed under a
+# different spelling. Other failures must not enter the alias re-spelling.
+treehouse_return_is_unmanaged_error() {
+  local text=$1
+  printf '%s\n' "$text" | grep -Eq "worktree .* is not managed by treehouse"
+}
+
+# Print the slot path treehouse itself currently records for <want-dir>, given
+# the pool-resolving directory the return runs from. The plain-string extraction
+# of "path" values is enough for pool slots; an escaping treehouse could apply
+# only makes a candidate fail to canonicalize, which fails the match safely.
+# A listing that cannot be read, or no recorded path resolving to the same
+# directory as <want-dir>, prints nothing and returns non-zero, so callers fail
+# safe to the original return error. Treehouse's own listing is the read surface:
+# its state files are never parsed or edited by hand.
+treehouse_recorded_slot_path() {  # <pool-cd-dir> <want-dir>
+  local cd_dir=$1 want_dir=$2 out entry resolved_want resolved_entry
+  out=$( ( cd "$cd_dir" && treehouse status --json ) 2>/dev/null ) || return 1
+  resolved_want=$(canonical_existing_dir "$want_dir") || return 1
+  while IFS= read -r entry; do
+    [ -n "$entry" ] || continue
+    resolved_entry=$(canonical_existing_dir "$entry") || continue
+    if [ "$resolved_entry" = "$resolved_want" ]; then
+      printf '%s\n' "$entry"
+      return 0
+    fi
+  done <<EOF
+$(printf '%s\n' "$out" | grep -oE '"path":"[^"]*"' | sed 's/^"path":"//; s/"$//')
+EOF
+  return 1
+}
+
 # Absolute path to the git index lock for a worktree/repo dir, or empty when it
 # cannot be resolved (dir missing or not a git worktree at all).
 worktree_git_lock_path() {
@@ -1823,10 +1880,12 @@ cleanup_stale_lock_for_safety_check() {
 }
 
 # Return a worktree/home via `treehouse return --force`, tolerating a transient or
-# stale git index.lock left by a killed crew process. See the script header.
+# stale git index.lock left by a killed crew process, and re-spelling the path
+# from treehouse's own slot listing when the same directory is recorded there
+# through a symbolic link. See the script header.
 teardown_treehouse_return() {
   local dir=$1 cd_dir=$2 label=$3 post_cleanup_check=${4:-}
-  local out lock attempt=0 max_retries lock_desc
+  local out lock attempt=0 max_retries lock_desc alias_dir
 
   # Capture stdout+stderr so non-lock failures stay visible and lock failures can
   # be matched by signature even when the lock file is already gone mid-check.
@@ -1837,7 +1896,29 @@ teardown_treehouse_return() {
   [ -n "$out" ] && printf '%s\n' "$out" >&2
 
   if ! treehouse_return_is_index_lock_error "$out"; then
-    return 1
+    if ! treehouse_return_is_unmanaged_error "$out"; then
+      return 1
+    fi
+    # The landed-work and slot-owner checks above already cleared this exact
+    # directory; only the spelling treehouse compares was different. Re-spell
+    # the path from treehouse's own listing (header: symbolic-link slot alias)
+    # rather than touching anything else.
+    alias_dir=$(treehouse_recorded_slot_path "$cd_dir" "$dir") || alias_dir=""
+    if [ -z "$alias_dir" ] || [ "$alias_dir" = "$dir" ]; then
+      return 1
+    fi
+    echo "teardown: $label path $dir is the same directory as treehouse's $alias_dir (reached through a symbolic link); returning treehouse's spelling" >&2
+    dir=$alias_dir
+    if out=$( ( cd "$cd_dir" && treehouse return --force "$dir" ) 2>&1 ); then
+      [ -n "$out" ] && printf '%s\n' "$out"
+      return 0
+    fi
+    [ -n "$out" ] && printf '%s\n' "$out" >&2
+    if ! treehouse_return_is_index_lock_error "$out"; then
+      return 1
+    fi
+    # The re-spelled return hit the transient-lock signature; the patient retry
+    # below now works on the recorded spelling, whose lock is the same file.
   fi
 
   lock=$(worktree_git_lock_path "$dir") || lock=""
