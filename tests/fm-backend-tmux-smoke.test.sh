@@ -57,6 +57,26 @@ SESSION="smoke"
 WINDOW="fm-smoke1"
 TARGET="$SESSION:$WINDOW"
 
+# --- container_ensure starts the server without Claude run markers ----------
+
+# The first session starts the tmux server, and every later window inherits the
+# server's startup environment, so a Claude Code tool shell's run markers must
+# not reach it while user configuration still does.
+container=$( unset TMUX
+  export CLAUDE_CODE_CHILD_SESSION=1 CLAUDE_CODE_SESSION_ID=parent-session CLAUDE_CODE_TMPDIR=/tmp/kept
+  fm_backend_tmux_container_ensure ) || fail "fm_backend_tmux_container_ensure failed outside tmux"
+[ "$container" = firstmate ] || fail "container_ensure outside tmux should name the firstmate session, got '$container'"
+server_env=$(tmux show-environment -g 2>/dev/null)
+case "$server_env" in
+  *CLAUDE_CODE_CHILD_SESSION=*|*CLAUDE_CODE_SESSION_ID=*)
+    fail "container_ensure leaked the launching Claude session's run markers into the tmux server" ;;
+esac
+case "$server_env" in
+  *CLAUDE_CODE_TMPDIR=/tmp/kept*) ;;
+  *) fail "container_ensure removed Claude user configuration that is not a run marker" ;;
+esac
+pass "real tmux: container_ensure starts the server without the launching Claude session's run markers"
+
 # --- create session ----------------------------------------------------------
 
 tmux new-session -d -s "$SESSION" -x 200 -y 50 \
