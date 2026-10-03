@@ -50,6 +50,8 @@ case "$1 ${2:-}" in
       "$FM_FAKE_HERDR_REAL_SLEEP" "$FM_FAKE_HERDR_SERVER_DELAY"
     fi
     printf '%s\n' running > "$state/$session"
+    printf 'CLAUDE_CODE_CHILD_SESSION=%s CLAUDE_CODE_SESSION_ID=%s CLAUDE_CODE_TMPDIR=%s\n' \
+      "${CLAUDE_CODE_CHILD_SESSION-<unset>}" "${CLAUDE_CODE_SESSION_ID-<unset>}" "${CLAUDE_CODE_TMPDIR-<unset>}" > "$state/$session.env"
     ;;
   "status --json")
     if [ "$lab_state" = running ]; then
@@ -164,6 +166,20 @@ test_provision_run_and_guarded_teardown() {
   sed -n "$((delete_line - 1))p" "$FAKE_LOG" | grep -F "session list --json --session $name" >/dev/null \
     || fail "delete was not immediately preceded by a fresh refuse-default session list"
   pass "fm-herdr-lab: provisioning, scoped calls, guarded teardown, and fleet tripwire are deterministic"
+}
+
+test_provision_scrubs_claude_run_markers() {
+  local name="fm-lab-claude-env-$$" seen
+  # Exported rather than prefixed: a prefix binds a temporary scope that unset
+  # peels back to whatever the shell running this test already exports.
+  ( export CLAUDE_CODE_CHILD_SESSION=1 CLAUDE_CODE_SESSION_ID=parent-session CLAUDE_CODE_TMPDIR=/tmp/kept
+    run_with_fake fm_herdr_lab_provision "$name" ) || fail "provision under a Claude tool shell failed"
+  seen=$(cat "$FAKE_STATE/$name.env")
+  assert_contains "$seen" "CLAUDE_CODE_CHILD_SESSION=<unset>" "provision leaked the launching Claude session's child marker into the lab server"
+  assert_contains "$seen" "CLAUDE_CODE_SESSION_ID=<unset>" "provision leaked the launching Claude session id into the lab server"
+  assert_contains "$seen" "CLAUDE_CODE_TMPDIR=/tmp/kept" "provision removed Claude user configuration that is not a run marker"
+  run_with_fake fm_herdr_lab_teardown "$name" || fail "teardown after the env fixture failed"
+  pass "fm-herdr-lab: provision starts the lab server without the launching Claude session's run markers"
 }
 
 test_run_scopes_session_before_double_dash() {
@@ -536,6 +552,7 @@ test_viewer_launcher_refuses_unsafe_arguments() {
 
 test_refuses_unsafe_names
 test_provision_run_and_guarded_teardown
+test_provision_scrubs_claude_run_markers
 test_run_scopes_session_before_double_dash
 test_missing_tripwire_blocks_destruction
 test_changed_default_trips_after_teardown

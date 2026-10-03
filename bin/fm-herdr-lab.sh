@@ -37,6 +37,12 @@
 # absent; teardown refuses when that stop cannot be confirmed.
 set -u
 
+_FM_HERDR_LAB_DIR=${BASH_SOURCE[0]%/*}
+[ "$_FM_HERDR_LAB_DIR" != "${BASH_SOURCE[0]}" ] || _FM_HERDR_LAB_DIR=.
+# shellcheck source=bin/fm-agent-process-lib.sh
+. "${_FM_HERDR_LAB_DIR:-/}/fm-agent-process-lib.sh"
+unset _FM_HERDR_LAB_DIR
+
 fm_herdr_lab_error() {
   echo "fm-herdr-lab: $*" >&2
 }
@@ -434,7 +440,9 @@ fm_herdr_lab_provision() { # <session>
   else
     fm_herdr_lab_prepare "$name" || return 1
   fi
-  fm_herdr_lab_raw "$name" server >/dev/null 2>&1 &
+  # The server hands its startup environment to every lab pane. exec keeps
+  # server_pid the server itself, so cancel_provision signals the right process.
+  (unset "${FM_CLAUDE_RUN_MARKER_VARS[@]}"; HERDR_SESSION="$name" exec herdr server --session "$name") >/dev/null 2>&1 &
   server_pid=$!
   attempt=0
   max_attempts=300

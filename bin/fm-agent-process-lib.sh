@@ -21,6 +21,27 @@ _FM_AGENT_PROCESS_LIB_DIR=${BASH_SOURCE[0]%/*}
 . "${_FM_AGENT_PROCESS_LIB_DIR:-/}/fm-gemini-lib.sh"
 unset _FM_AGENT_PROCESS_LIB_DIR
 
+# The per-run markers a Claude Code session exports into every shell it starts.
+# A long-lived process that inherits them - a multiplexer server, a worker
+# launched from a supervisor's tool shell - makes every later `claude` believe
+# it is that session's child: CLAUDE_CODE_CHILD_SESSION alone turns transcript
+# saving off, so --resume finds nothing. User configuration such as
+# CLAUDE_CONFIG_DIR, CLAUDE_CODE_TMPDIR, or CLAUDE_CODE_OAUTH_TOKEN is not a run
+# marker and is deliberately absent; a CLAUDE_CODE_* prefix match would strip it.
+# shellcheck disable=SC2034  # read by the backends, fm-spawn.sh, and fm-herdr-lab.sh
+FM_CLAUDE_RUN_MARKER_VARS=(CLAUDECODE CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_SESSION_ID CLAUDE_CODE_SESSION_ATTENDED
+  CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_EXECPATH CLAUDE_CODE_MESSAGING_SOCKET CLAUDE_CODE_MESSAGING_TOKEN
+  CLAUDE_PID CLAUDE_PROJECT_DIR CLAUDE_EFFORT)
+
+# fm_claude_run_marker_env_args: the markers as `-u NAME` words for an `env`
+# prefix inside a command string that runs somewhere else, such as a pane.
+fm_claude_run_marker_env_args() {
+  local name
+  for name in "${FM_CLAUDE_RUN_MARKER_VARS[@]}"; do
+    printf -- '-u %s ' "$name"
+  done
+}
+
 # fm_agent_process_classify_name: the single owner of the process-name
 # vocabulary shared by every liveness signal - `agent` for a verified harness,
 # `shell` for an idle login/interactive shell, `other` for anything else.
